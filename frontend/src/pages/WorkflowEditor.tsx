@@ -29,6 +29,7 @@ interface WorkflowEditorProps {
   workflow?: Workflow | null;
   onBack?: () => void;
   readOnly?: boolean;
+  autoOpenPreview?: boolean;
 }
 
 // 节点类型定义
@@ -281,7 +282,8 @@ const FlowCanvas = ({
   workflowName,
   setWorkflowName,
   onBack,
-  onSave
+  onSave,
+  autoOpenPreview = false,
 }: any) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -293,6 +295,8 @@ const FlowCanvas = ({
   const [isSaving, setIsSaving] = useState(false);
   const isInitializedRef = useRef(false);
   const hasUserInteractionRef = useRef(false);
+  const isDirtyRef = useRef(false);
+  const lastSavedSnapshotRef = useRef('');
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   const workflowNameRef = useRef(workflowName);
@@ -346,15 +350,28 @@ const FlowCanvas = ({
   // 使用 ref 来跟踪保存状态，避免循环依赖
   const isSavingRef = useRef(false);
 
-  // 自动保存功能 - 使用 ref 避免循环依赖
+  // 自动保存功能 - 仅在有实质变更(dirty)时保存
   const autoSave = useCallback(async () => {
-    if (readOnly || isSavingRef.current) return;
+    if (readOnly || isSavingRef.current || !isDirtyRef.current) return;
+
+    const graphData = { nodes: nodesRef.current, edges: edgesRef.current };
+    const snapshot = JSON.stringify({
+      workflowName: workflowNameRef.current,
+      graphData,
+    });
+
+    // 快照未变化则不保存，避免“过一会儿自动保存一次”
+    if (snapshot === lastSavedSnapshotRef.current) {
+      isDirtyRef.current = false;
+      return;
+    }
 
     isSavingRef.current = true;
     setIsSaving(true);
     try {
-      const graphData = { nodes: nodesRef.current, edges: edgesRef.current };
       await onSaveRef.current(workflowNameRef.current, graphData);
+      lastSavedSnapshotRef.current = snapshot;
+      isDirtyRef.current = false;
       console.log('自动保存成功');
     } catch (error) {
       console.error('自动保存失败:', error);
@@ -364,7 +381,7 @@ const FlowCanvas = ({
     }
   }, [readOnly]);
 
-  // 监听节点和边的变化，触发自动保存
+  // 监听节点、边、名称变化，触发自动保存
   useEffect(() => {
     if (readOnly) return;
 
@@ -390,16 +407,33 @@ const FlowCanvas = ({
     };
     // 注意：不将 autoSave 加入依赖数组，避免循环触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, readOnly]);
+  }, [nodes, edges, workflowName, readOnly]);
 
   // 标记用户交互的回调包装器
   const handleNodesChangeWithInteraction = useCallback((changes: any) => {
-    hasUserInteractionRef.current = true;
+    // 忽略纯选中类变化，避免无实质改动也触发自动保存
+    const hasMeaningfulChange = Array.isArray(changes)
+      ? changes.some((c: any) => c.type !== 'select' && c.type !== 'dimensions')
+      : true;
+
+    if (hasMeaningfulChange) {
+      hasUserInteractionRef.current = true;
+      isDirtyRef.current = true;
+    }
+
     onNodesChange(changes);
   }, [onNodesChange]);
 
   const handleEdgesChangeWithInteraction = useCallback((changes: any) => {
-    hasUserInteractionRef.current = true;
+    const hasMeaningfulChange = Array.isArray(changes)
+      ? changes.some((c: any) => c.type !== 'select')
+      : true;
+
+    if (hasMeaningfulChange) {
+      hasUserInteractionRef.current = true;
+      isDirtyRef.current = true;
+    }
+
     onEdgesChange(changes);
   }, [onEdgesChange]);
 
@@ -421,6 +455,7 @@ const FlowCanvas = ({
   const onConnect = useCallback(
     (params: Connection) => {
       hasUserInteractionRef.current = true;
+      isDirtyRef.current = true;
       setEdges((eds) => addEdge({ ...params, animated: true, markerEnd: { type: MarkerType.ArrowClosed } }, eds));
     },
     [setEdges]
@@ -454,6 +489,7 @@ const FlowCanvas = ({
       };
 
       hasUserInteractionRef.current = true;
+      isDirtyRef.current = true;
       setNodes((nds) => nds.concat(newNode));
     },
     [project, setNodes]
@@ -472,16 +508,15 @@ const FlowCanvas = ({
     return labels[type] || '节点';
   };
 
-  // 收集节点参数到参数池 - 使用固定参数名
+  // 收集节点参数到参数池
   useEffect(() => {
-    // 定义固定参数名映射
+    // 定义固定参数名映射（输入节点和大模型节点使用固定名称）
     const fixedParamNames: Record<string, { id: string; label: string }> = {
       input: { id: 'user_input', label: '用户输入' },
       llm: { id: 'llm_output', label: '大模型输出' },
-      code: { id: 'code_result', label: '代码执行结果' },
     };
 
-    // 收集节点参数（使用固定名称）
+    // 收集节点参数
     nodes.forEach(node => {
       const paramConfig = fixedParamNames[node.type || ''];
       if (paramConfig) {
@@ -497,6 +532,22 @@ const FlowCanvas = ({
           description: `来自${getNodeLabel(node.type || '')}节点`,
         });
       }
+      
+      // 代码节点：收集用户自定义的输出参数
+      if (node.type === 'code') {
+        const outputVars = node.data?.outputVars || [];
+        outputVars.forEach((outputVar: any) => {
+          if (outputVar.name) {
+            addParam({
+              id: outputVar.name,
+              label: `${outputVar.name} (来自${node.data?.label || '代码节点'})`,
+              type: (outputVar.type?.toLowerCase() || 'object') as any,
+              source: '代码节点',
+              description: `代码节点 ${node.data?.label || node.id} 的输出参数`,
+            });
+          }
+        });
+      }
     });
   }, [nodes, addParam]);
 
@@ -504,6 +555,8 @@ const FlowCanvas = ({
     try {
       const graphData = { nodes, edges };
       await onSave(workflowName, graphData);
+      lastSavedSnapshotRef.current = JSON.stringify({ workflowName, graphData });
+      isDirtyRef.current = false;
     } catch (error) {
       message.error('保存失败');
     }
@@ -516,6 +569,9 @@ const FlowCanvas = ({
 
   // 更新节点数据
   const handleUpdateNode = useCallback((nodeId: string, newData: any) => {
+    hasUserInteractionRef.current = true;
+    isDirtyRef.current = true;
+
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id === nodeId) {
@@ -537,6 +593,12 @@ const FlowCanvas = ({
   }, [setNodes]);
 
   const [previewVisible, setPreviewVisible] = useState(false);
+
+  useEffect(() => {
+    if (autoOpenPreview) {
+      setPreviewVisible(true);
+    }
+  }, [autoOpenPreview]);
 
   const handleDemo = () => {
     setPreviewVisible(true);
@@ -560,7 +622,11 @@ const FlowCanvas = ({
         ) : (
           <Input
             value={workflowName}
-            onChange={(e) => setWorkflowName(e.target.value)}
+            onChange={(e) => {
+              hasUserInteractionRef.current = true;
+              isDirtyRef.current = true;
+              setWorkflowName(e.target.value);
+            }}
             style={{ width: 300, background: 'transparent', border: 'none', color: 'white', fontSize: 20, fontWeight: 'bold' }}
             placeholder="工作流名称"
           />
@@ -631,7 +697,7 @@ const FlowCanvas = ({
 };
 
 // 主组件
-const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflow: initialWorkflow, onBack, readOnly = false }) => {
+const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflow: initialWorkflow, onBack, readOnly = false, autoOpenPreview = false }) => {
   const [workflow, setWorkflow] = useState<Workflow | null>(initialWorkflow || null);
   const [workflowName, setWorkflowName] = useState(initialWorkflow?.workflowName || '新工作流');
 
@@ -670,6 +736,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflow: initialWorkfl
           setWorkflowName={setWorkflowName}
           onBack={onBack}
           onSave={handleSave}
+          autoOpenPreview={autoOpenPreview}
         />
       </ReactFlowProvider>
     </ParamPoolProvider>

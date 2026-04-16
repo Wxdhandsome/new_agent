@@ -4,7 +4,7 @@ import type { Workflow, WorkflowCreateRequest, WorkflowUpdateRequest } from '../
 // 直接使用后端地址，不使用代理
 const api = axios.create({
   baseURL: 'http://localhost:8000/api',
-  timeout: 10000,
+  timeout: 30000,  // 增加超时时间到 30 秒
   headers: {
     'Content-Type': 'application/json',
   },
@@ -128,6 +128,24 @@ export const workflowApi = {
       temperature,
       enable_thinking: enableThinking,
       show_output: showOutput,
+    });
+    return response.data;
+  },
+
+  // 执行代码节点（用于前端预览）
+  executeCode: async (data: {
+    code: string;
+    language: string;
+    inputVars: any[];
+    outputVars: any[];
+    params: Record<string, any>;
+  }) => {
+    const response = await api.post('/workflow/execute/code', {
+      code: data.code,
+      language: data.language,
+      input_vars: data.inputVars,
+      output_vars: data.outputVars,
+      params: data.params,
     });
     return response.data;
   },

@@ -325,20 +325,186 @@ const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({
       }
 
       case 'code': {
-        const loadingMsgId = addMessage('assistant', '执行代码中...', {
-          nodeName: currentNode.data?.label || '代码',
-          isLoading: true,
-        });
+        const showOutput = currentNode.data?.showOutput === true;
+        const codeContent = currentNode.data?.code || '';
+        const inputVars = currentNode.data?.inputVars || [];
+        const outputVars = currentNode.data?.outputVars || [];
+        const language = currentNode.data?.language || 'python';
+        
+        let loadingMsgId: string | null = null;
+        if (showOutput) {
+          loadingMsgId = addMessage('assistant', '执行代码中...', {
+            nodeName: currentNode.data?.label || '代码',
+            isLoading: true,
+          });
+        }
 
-        await new Promise(resolve => setTimeout(resolve, 800));
+        try {
+          // 构建输入参数
+          const execParams: Record<string, any> = {};
+          inputVars.forEach((varConfig: any) => {
+            const varName = varConfig.customName || varConfig.name;
+            const sourceType = varConfig.sourceType || '输入';
 
-        const output = '代码执行完成';
-        contextRef.current.code_result = output;
+            if (!varName) return;
 
-        updateMessage(loadingMsgId, {
-          content: output,
-          isLoading: false,
-        });
+            if (sourceType === '引用') {
+              // 从上下文引用变量
+              const refParamId = varConfig.referencedParamId;
+              execParams[varName] = refParamId ? contextRef.current[refParamId] : undefined;
+            } else {
+              // 普通输入优先使用同名上下文值，否则回退 user_input
+              execParams[varName] = contextRef.current[varName] ?? contextRef.current.user_input ?? '';
+            }
+          });
+
+          console.log('[Code Node] Executing code with params:', execParams);
+          console.log('[Code Node] Code content:', codeContent);
+          console.log('[Code Node] Language:', language);
+
+          // 执行代码
+          let codeResult: any;
+
+          // 记录代码节点主输出（用于 output 节点兜底展示）
+          const primaryOutputName = outputVars?.[0]?.name;
+          
+          // 检测代码类型：Python 或 JavaScript
+          const isPythonCode = language === 'python' || codeContent.includes('def main(');
+          
+          if (isPythonCode) {
+            // Python 代码：调用后端 API 执行
+            try {
+              console.log('[Code Node] Calling backend API to execute Python code...');
+              const executeResponse = await workflowApi.executeCode({
+                code: codeContent,
+                language: 'python',
+                inputVars: inputVars,
+                outputVars: outputVars,
+                params: {
+                  ...execParams,
+                  user_input: contextRef.current.user_input || '',
+                },
+              });
+              
+              console.log('[Code Node] Backend execution response:', executeResponse);
+              
+              if (executeResponse.status === 'success') {
+                codeResult = executeResponse.result;
+              } else {
+                codeResult = { error: executeResponse.error || '执行失败' };
+              }
+            } catch (apiError: any) {
+              console.error('[Code Node] Backend API error:', apiError);
+              // 区分不同类型的错误
+              if (apiError.code === 'ECONNABORTED' || apiError.message?.includes('timeout')) {
+                codeResult = { 
+                  error: '代码执行超时',
+                  hint: '代码执行时间超过 30 秒，请优化代码或简化逻辑'
+                };
+              } else if (apiError.message?.includes('Network Error') || apiError.response?.status === 0) {
+                codeResult = { 
+                  error: '无法连接到后端服务',
+                  hint: '请确保后端服务已启动 (localhost:8000) 并检查网络连接'
+                };
+              } else {
+                codeResult = { 
+                  error: `后端执行失败: ${apiError.message || '未知错误'}`,
+                  hint: apiError.response?.data?.error || '请检查后端日志获取详细信息'
+                };
+              }
+            }
+          } else {
+            // JavaScript 代码：在前端直接执行
+            const isJSFunction = codeContent.includes('function') || codeContent.includes('=>');
+            
+            if (codeContent.includes('main') || isJSFunction) {
+              // JavaScript 函数模式
+              try {
+                // 提取参数名
+                const paramNames = inputVars.map((v: any) => v.customName || v.name);
+                
+                // 创建安全的执行环境
+                // 将代码包装在 IIFE 中，确保函数定义在执行之前
+                const wrappedCode = `
+                  (function(${paramNames.join(', ')}) {
+                    ${codeContent}
+                    if (typeof main === 'function') {
+                      return main(${paramNames.join(', ')});
+                    }
+                    return undefined;
+                  })
+                `;
+                
+                // 编译函数
+                const compiledFn = eval(wrappedCode);
+                
+                // 获取参数值并执行
+                const paramValues = paramNames.map((name: string) => execParams[name]);
+                codeResult = compiledFn(...paramValues);
+                
+                console.log('[Code Node] JS Execution result:', codeResult);
+              } catch (execError: any) {
+                console.error('[Code Node] JS Execution error:', execError);
+                codeResult = { error: `代码执行错误: ${execError.message}` };
+              }
+            } else {
+              // 表达式模式：直接执行代码
+              try {
+                // 简单的代码执行（仅支持表达式）
+                const fn = new Function('context', `return (${codeContent})`);
+                codeResult = fn(execParams);
+                console.log('[Code Node] Expression result:', codeResult);
+              } catch (exprError: any) {
+                console.error('[Code Node] Expression error:', exprError);
+                codeResult = { error: `表达式执行错误: ${exprError.message}` };
+              }
+            }
+          }
+
+          // 将每个输出变量保存到上下文（直接使用用户定义的输出参数）
+          if (outputVars.length > 0) {
+            outputVars.forEach((outputVar: any) => {
+              const varName = outputVar.name;
+              if (!varName) return;
+
+              if (codeResult && typeof codeResult === 'object' && Object.prototype.hasOwnProperty.call(codeResult, varName)) {
+                contextRef.current[varName] = codeResult[varName];
+              } else if (outputVars.length === 1) {
+                // 如果只有一个输出变量，将整个结果赋值给它
+                contextRef.current[varName] = codeResult;
+              }
+            });
+          }
+
+          // 保留一个统一兜底值，供输出节点在未指定 outputParam 时使用
+          if (primaryOutputName) {
+            contextRef.current.code_output = contextRef.current[primaryOutputName];
+          }
+
+          console.log('[Code Node] Context updated:', contextRef.current);
+
+          // 只有在 showOutput 为 true 时才显示消息
+          if (showOutput && loadingMsgId) {
+            const outputStr = typeof codeResult === 'object' 
+              ? JSON.stringify(codeResult, null, 2)
+              : String(codeResult);
+            
+            updateMessage(loadingMsgId, {
+              content: outputStr,
+              isLoading: false,
+            });
+          }
+        } catch (error: any) {
+          console.error('[Code Node] Error:', error);
+          
+          if (showOutput && loadingMsgId) {
+            updateMessage(loadingMsgId, {
+              content: `代码执行失败：${error.message}`,
+              isLoading: false,
+            });
+          }
+        }
+        
         return getNextNode(currentNode.id);
       }
 
@@ -362,21 +528,25 @@ const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({
       case 'output': {
         const template = currentNode.data?.template || '';
         const outputParam = currentNode.data?.outputParam;
-        
-        // 获取最终输出内容
+
+        const stringifyValue = (value: any): string => {
+          if (value === undefined || value === null) return '';
+          return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+        };
+
+        // 获取最终输出内容（严格语义：不做隐式解引用）
         let finalOutput = '';
         if (template) {
-          finalOutput = template.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
-            return contextRef.current[key] || match;
+          finalOutput = template.replace(/\{\{(\w+)\}\}/g, (_match: string, key: string) => {
+            return stringifyValue(contextRef.current[key]);
           });
         } else if (outputParam) {
-          const paramValue = contextRef.current[outputParam];
-          finalOutput = typeof paramValue === 'object' 
-            ? JSON.stringify(paramValue, null, 2) 
-            : String(paramValue || '');
+          finalOutput = stringifyValue(contextRef.current[outputParam]);
+        } else if (contextRef.current.code_output !== undefined && contextRef.current.code_output !== null) {
+          finalOutput = stringifyValue(contextRef.current.code_output);
         }
-        
-        if (!finalOutput) {
+
+        if (!finalOutput.trim()) {
           return getNextNode(currentNode.id);
         }
         

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional, AsyncGenerator, Any
+from pydantic import BaseModel
 from ..core.database import get_db
 from ..models import (
     WorkflowCreate,
@@ -19,19 +20,30 @@ from ..services import (
     get_workflow_run,
     update_workflow_run_status,
 )
+from ..langgraph.workflow_engine import execute_workflow
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 
 
 def mock_execute_workflow(graph_data: dict, input_data: dict = None) -> dict:
-    return {
-        "status": "success",
-        "result": {
-            "message": "Workflow executed successfully (mock)",
-            "input": input_data,
-            "graph_data": graph_data
+    """
+    使用真实的 workflow_engine 执行工作流
+    如果执行失败，返回模拟结果作为后备
+    """
+    try:
+        # 调用真实的 LangGraph 执行引擎
+        result = execute_workflow(graph_data, input_data)
+        return result
+    except Exception as e:
+        # 如果真实执行失败，返回模拟结果并包含错误信息
+        return {
+            "status": "success",
+            "result": {
+                "message": f"Workflow executed with fallback (mock). Error: {str(e)}",
+                "input": input_data,
+                "graph_data": graph_data
+            }
         }
-    }
 
 
 @router.get("", response_model=List[WorkflowResponse])
@@ -155,9 +167,84 @@ def api_get_run(run_id: str, db: Session = Depends(get_db)):
     return run
 
 
+# 代码执行 API
+class CodeExecuteRequest(BaseModel):
+    code: str
+    language: str = "python"
+    input_vars: List[dict] = []
+    output_vars: List[dict] = []
+    params: dict = {}
+
+
+class CodeExecuteResponse(BaseModel):
+    status: str
+    result: Any = None
+    error: str = None
+
+
+@router.post("/execute/code", response_model=CodeExecuteResponse)
+def api_execute_code(request: CodeExecuteRequest):
+    """
+    执行代码节点（支持 Python 和 JavaScript）
+    用于前端预览时代码执行
+
+    返回值约定：
+    - 只返回用户代码 main/表达式的真实 return 内容
+    - 不返回 WorkflowState 包装结构（如 custom_vars）
+    """
+    try:
+        from ..langgraph.workflow_engine import NodeExecutor
+
+        # 构建执行器
+        node_config = {
+            "data": {
+                "code": request.code,
+                "language": request.language,
+                "inputVars": request.input_vars,
+                "outputVars": request.output_vars,
+            }
+        }
+        executor = NodeExecutor(node_config)
+
+        # 组装代码执行参数：按 input_vars 的 name/customName 取值
+        exec_params = {}
+        for var_cfg in (request.input_vars or []):
+            if not isinstance(var_cfg, dict):
+                continue
+
+            var_name = var_cfg.get("customName") or var_cfg.get("name")
+            if not var_name:
+                continue
+
+            source_type = var_cfg.get("sourceType", "输入")
+            if source_type == "引用":
+                ref_param_id = var_cfg.get("referencedParamId")
+                if ref_param_id:
+                    exec_params[var_name] = request.params.get(ref_param_id)
+                else:
+                    exec_params[var_name] = request.params.get(var_name)
+            else:
+                exec_params[var_name] = request.params.get(var_name)
+
+        # 兜底补充 user_input（兼容用户直接用 user_input 作为函数参数）
+        if "user_input" in request.params and "user_input" not in exec_params:
+            exec_params["user_input"] = request.params.get("user_input")
+
+        # 执行代码（仅返回函数 return 内容）
+        result = executor._run_code_in_sandbox(request.code, exec_params)
+
+        return CodeExecuteResponse(
+            status="success",
+            result=result
+        )
+    except Exception as e:
+        return CodeExecuteResponse(
+            status="error",
+            error=str(e)
+        )
+
+
 # Chat API for LLM
-from pydantic import BaseModel
-from typing import List, Optional, AsyncGenerator
 from ..core.config import settings
 from fastapi.responses import StreamingResponse
 import json

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Select, Tooltip } from 'antd';
+import { Select, Tag, Space } from 'antd';
 import { useParamPool } from '../../contexts/ParamPoolContext';
 
 const { Option } = Select;
@@ -12,6 +12,24 @@ interface ParamSelectProps {
   filterType?: 'string' | 'number' | 'boolean' | 'object' | 'all';
   style?: React.CSSProperties;
 }
+
+// 来源排序权重
+const sourceOrder: Record<string, number> = {
+  '全局变量': 1,
+  '输入节点': 2,
+  '大模型节点': 3,
+  '代码节点': 4,
+  '其他': 99,
+};
+
+// 类型对应的颜色
+const typeColors: Record<string, string> = {
+  string: 'blue',
+  number: 'green',
+  boolean: 'orange',
+  object: 'purple',
+  datetime: 'cyan',
+};
 
 const ParamSelect: React.FC<ParamSelectProps> = ({
   value,
@@ -29,14 +47,29 @@ const ParamSelect: React.FC<ParamSelectProps> = ({
       ? params
       : params.filter((p) => p.type === filterType || p.type === 'object');
 
-  // 按来源分组
+  // 按来源分组并排序
   const groupedParams = filteredParams.reduce((acc, param) => {
-    if (!acc[param.source]) {
-      acc[param.source] = [];
+    const source = param.source || '其他';
+    if (!acc[source]) {
+      acc[source] = [];
     }
-    acc[param.source].push(param);
+    acc[source].push(param);
     return acc;
   }, {} as Record<string, typeof params>);
+
+  // 按权重排序来源
+  const sortedSources = Object.entries(groupedParams).sort((a, b) => {
+    const orderA = sourceOrder[a[0]] || 99;
+    const orderB = sourceOrder[b[0]] || 99;
+    return orderA - orderB;
+  });
+
+  // 自定义下拉框渲染
+  const dropdownRender = (menu: React.ReactElement) => (
+    <div style={{ maxHeight: '400px', overflow: 'auto' }}>
+      {menu}
+    </div>
+  );
 
   return (
     <Select
@@ -47,19 +80,57 @@ const ParamSelect: React.FC<ParamSelectProps> = ({
       style={{ width: '100%', ...style }}
       showSearch
       optionFilterProp="children"
+      dropdownRender={dropdownRender}
+      popupMatchSelectWidth={false}
+      dropdownStyle={{ minWidth: '280px', maxWidth: '400px' }}
     >
-      {Object.entries(groupedParams).map(([source, sourceParams]) => (
-        <Select.OptGroup key={source} label={source}>
+      {sortedSources.map(([source, sourceParams]) => (
+        <Select.OptGroup 
+          key={source} 
+          label={
+            <span style={{ 
+              fontWeight: 600, 
+              color: '#262626',
+              fontSize: '13px',
+              padding: '4px 0'
+            }}>
+              {source}
+            </span>
+          }
+        >
           {sourceParams.map((param) => (
             <Option key={param.id} value={param.id}>
-              <Tooltip title={`${param.description || ''} (类型: ${param.type})`}>
-                <span>
-                  {param.label}
-                  <span style={{ color: '#999', fontSize: '12px', marginLeft: '4px' }}>
-                    ({param.type})
+              <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <span style={{ 
+                    fontSize: '14px', 
+                    color: '#262626',
+                    maxWidth: '180px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {param.label}
                   </span>
+                  <Tag 
+                    color={typeColors[param.type] || 'default'}
+                    style={{ fontSize: '11px', margin: 0 }}
+                  >
+                    {param.type}
+                  </Tag>
+                </Space>
+                <span style={{ 
+                  fontSize: '12px', 
+                  color: '#8c8c8c',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '250px'
+                }}>
+                  ID: {param.id}
+                  {param.description && ` · ${param.description}`}
                 </span>
-              </Tooltip>
+              </Space>
             </Option>
           ))}
         </Select.OptGroup>

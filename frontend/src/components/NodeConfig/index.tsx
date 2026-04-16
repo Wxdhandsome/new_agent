@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { Form, Input, Select, Button, Space, Card, Divider, Row, Col } from 'antd';
+import React, { useEffect, useCallback } from 'react';
+import { Form, Input, Select, Button, Card, Divider, Row, Col } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { Node } from 'reactflow';
 import ParamSelect from '../ParamSelect';
@@ -327,10 +327,96 @@ const ConditionNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void 
 // 代码节点配置
 const CodeNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
+  const { addReference, removeReference } = useParamPool();
 
   useEffect(() => {
     form.setFieldsValue(node.data);
   }, [node, form]);
+
+  const inputVars = Form.useWatch('inputVars', form) || [];
+
+  const addInputVar = () => {
+    const currentVars = form.getFieldValue('inputVars') || [];
+    form.setFieldsValue({
+      inputVars: [
+        ...currentVars,
+        { name: `arg${currentVars.length + 1}`, sourceType: '输入' },
+      ],
+    });
+  };
+
+  const removeInputVar = (index: number) => {
+    const currentVars = form.getFieldValue('inputVars') || [];
+
+    // 如果有引用关系，同时移除
+    if (currentVars[index]?.referenceId) {
+      removeReference(currentVars[index].referenceId);
+    }
+
+    form.setFieldsValue({
+      inputVars: currentVars.filter((_: any, i: number) => i !== index),
+    });
+  };
+
+  // 处理参数类型变化
+  const handleSourceTypeChange = useCallback((index: number, sourceType: string) => {
+    const currentVars = form.getFieldValue('inputVars') || [];
+    if (currentVars[index]) {
+      currentVars[index].sourceType = sourceType;
+      
+      // 如果切换到"输入"类型，清除引用信息
+      if (sourceType === '输入') {
+        delete currentVars[index].referenceId;
+        delete currentVars[index].referencedParamId;
+      }
+      
+      form.setFieldsValue({ inputVars: [...currentVars] });
+      onUpdate(form.getFieldsValue());
+    }
+  }, [form, onUpdate]);
+
+  // 处理引用参数变化
+  const handleReferencedParamChange = useCallback((index: number, referencedParamId: string) => {
+    const currentVars = form.getFieldValue('inputVars') || [];
+    if (!currentVars[index]) return;
+
+    currentVars[index].referencedParamId = referencedParamId;
+
+    // 如果是引用类型，创建或更新引用关系（参数名保持用户自定义）
+    if (currentVars[index]?.sourceType === '引用' && referencedParamId && node.id) {
+      if (!currentVars[index].referenceId) {
+        const refId = addReference({
+          sourceNodeId: 'context',
+          sourceParamId: referencedParamId,
+          targetNodeId: node.id,
+          targetParamName: currentVars[index].name || `arg${index + 1}`,
+          sourceType: 'reference',
+          isActive: true,
+        });
+        currentVars[index].referenceId = refId;
+      }
+    }
+
+    form.setFieldsValue({ inputVars: [...currentVars] });
+    onUpdate(form.getFieldsValue());
+  }, [form, addReference, node.id, onUpdate]);
+
+  const addOutputVar = () => {
+    const currentVars = form.getFieldValue('outputVars') || [];
+    form.setFieldsValue({
+      outputVars: [
+        ...currentVars,
+        { name: `result${currentVars.length + 1}`, type: 'String' },
+      ],
+    });
+  };
+
+  const removeOutputVar = (index: number) => {
+    const currentVars = form.getFieldValue('outputVars') || [];
+    form.setFieldsValue({
+      outputVars: currentVars.filter((_: any, i: number) => i !== index),
+    });
+  };
 
   return (
     <Form
@@ -348,20 +434,184 @@ const CodeNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = 
         </Select>
       </Form.Item>
 
-      <Divider orientation="left">输入参数</Divider>
-      <Form.Item label="选择输入参数" name="inputParams">
-        <ParamSelect placeholder="选择要使用的参数" />
-      </Form.Item>
+      <Divider orientation="left">入参</Divider>
+      
+      <Form.List name="inputVars">
+        {(fields, { add, remove }) => (
+          <>
+            {fields.map(({ key, name, ...restField }, index) => {
+              const currentVar = inputVars[index];
+              const isReference = currentVar?.sourceType === '引用';
+              
+              return (
+                <div key={key} style={{ marginBottom: '12px' }}>
+                  <Row gutter={[8, 8]} align="middle">
+                    {/* 参数名输入框 */}
+                    <Col span={10}>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'name']}
+                        rules={[{ required: true, message: '请输入参数名' }]}
+                        style={{ marginBottom: 0 }}
+                      >
+                        <Input 
+                          placeholder={isReference ? "输入函数入参名（如 user_text）" : "输入参数名"}
+                        />
+                      </Form.Item>
+                    </Col>
+
+                    {/* 参数类型选择 */}
+                    <Col span={6}>
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'sourceType']}
+                        initialValue="输入"
+                        style={{ marginBottom: 0 }}
+                      >
+                        <Select onChange={(value) => handleSourceTypeChange(index, value)}>
+                          <Option value="输入">输入</Option>
+                          <Option value="引用">引用</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+
+                    {/* 引用参数选择下拉框（仅当类型为"引用"时显示） */}
+                    {isReference ? (
+                      <Col span={6}>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'referencedParamId']}
+                          rules={[{ required: true, message: '请选择参数' }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <ParamSelect 
+                            placeholder="选择上文参数"
+                            onChange={(value) => handleReferencedParamChange(index, value)}
+                          />
+                        </Form.Item>
+                      </Col>
+                    ) : null}
+
+                    {/* 删除按钮 */}
+                    <Col span={isReference ? 2 : 8}>
+                      <Button
+                        type="text"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => {
+                          remove(index);
+                          removeInputVar(index);
+                        }}
+                        style={{ width: '100%' }}
+                      />
+                    </Col>
+                  </Row>
+                </div>
+              );
+            })}
+            
+            <Button
+              type="dashed"
+              onClick={() => {
+                add();
+                addInputVar();
+              }}
+              block
+              icon={<PlusOutlined />}
+              style={{ marginTop: fields.length > 0 ? 8 : 0 }}
+            >
+              添加参数
+            </Button>
+          </>
+        )}
+      </Form.List>
+
+      <Divider orientation="left">执行代码</Divider>
 
       <Form.Item label="代码" name="code" rules={[{ required: true }]}>
-        <TextArea rows={10} placeholder="输入代码，使用 context 对象访问上下文数据" />
+        <TextArea 
+          rows={10} 
+          placeholder={`def main(arg1: str, arg2: str) -> dict:\n    # 在此编写你的代码\n    return {'result1': arg1, 'result2': arg2}`}
+        />
       </Form.Item>
+
+      <Divider orientation="left">出参</Divider>
+      
+      <Form.List name="outputVars">
+        {(fields, { add, remove }) => (
+          <>
+            {fields.map(({ key, name, ...restField }, index) => (
+              <Row key={key} gutter={8} style={{ marginBottom: '8px' }}>
+                <Col span={12}>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'name']}
+                    rules={[{ required: true, message: '请输入参数名' }]}
+                  >
+                    <Input placeholder="参数名" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    {...restField}
+                    name={[name, 'type']}
+                    initialValue="String"
+                  >
+                    <Select>
+                      <Option value="String">String</Option>
+                      <Option value="Number">Number</Option>
+                      <Option value="Boolean">Boolean</Option>
+                      <Option value="Object">Object</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => {
+                      remove(index);
+                      removeOutputVar(index);
+                    }}
+                  />
+                </Col>
+              </Row>
+            ))}
+            <Button
+              type="dashed"
+              onClick={() => {
+                add();
+                addOutputVar();
+              }}
+              block
+              icon={<PlusOutlined />}
+            >
+              添加新的参数
+            </Button>
+          </>
+        )}
+      </Form.List>
 
       <Form.Item>
         <div style={{ padding: '8px', background: '#f0f0f0', borderRadius: '4px', fontSize: '12px' }}>
-          <strong>参数名:</strong> code_result<br/>
-          <span style={{ color: '#666' }}>此节点的输出将自动保存到 code_result 变量</span>
+          <strong>参数传递说明:</strong><br/>
+          <span style={{ color: '#666' }}>
+            代码返回值会按你在上方配置的“出参名”写入上下文变量，后续节点可直接通过参数下拉进行引用。
+          </span>
         </div>
+      </Form.Item>
+
+      <Form.Item 
+        label="在对话中显示输出" 
+        name="showOutput" 
+        initialValue={false}
+        extra="关闭后代码节点的输出将不在对话界面中显示，但仍会保存到变量中供后续节点使用"
+      >
+        <Select>
+          <Option value={true}>显示</Option>
+          <Option value={false}>隐藏</Option>
+        </Select>
       </Form.Item>
 
       <Form.Item label="超时时间(秒)" name="timeout" initialValue={30}>
@@ -470,7 +720,7 @@ const NodeConfigPanel: React.FC<NodeConfigPanelProps> = ({ selectedNode, onUpdat
     }
   };
 
-  const getNodeTypeName = (type: string) => {
+  const getNodeTypeName = (type: string | undefined) => {
     const names: Record<string, string> = {
       start: '开始节点',
       input: '输入节点',
@@ -480,7 +730,7 @@ const NodeConfigPanel: React.FC<NodeConfigPanelProps> = ({ selectedNode, onUpdat
       output: '输出节点',
       end: '结束节点',
     };
-    return names[type] || '未知节点';
+    return names[type || ''] || '未知节点';
   };
 
   return (

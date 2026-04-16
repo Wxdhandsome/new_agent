@@ -24,9 +24,10 @@ import type { Workflow } from '../types';
 interface WorkflowListProps {
   onEdit: (workflow: Workflow) => void;
   onView: (workflow: Workflow) => void;
+  onDemo: (workflow: Workflow) => void;
 }
 
-const WorkflowList: React.FC<WorkflowListProps> = ({ onEdit, onView }) => {
+const WorkflowList: React.FC<WorkflowListProps> = ({ onEdit, onView, onDemo }) => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
@@ -74,12 +75,7 @@ const WorkflowList: React.FC<WorkflowListProps> = ({ onEdit, onView }) => {
   };
 
   const handleDemo = async (workflow: Workflow) => {
-    try {
-      await workflowApi.demo(workflow.workflowId, {});
-      message.success('演示已启动');
-    } catch (error) {
-      message.error('演示启动失败');
-    }
+    onDemo(workflow);
   };
 
   const getStatusTag = (status: string) => {

@@ -5,7 +5,7 @@ import WorkflowList from './pages/WorkflowList';
 import WorkflowEditor from './pages/WorkflowEditor';
 import type { Workflow } from './types/index';
 
-type ViewMode = 'list' | 'edit' | 'view';
+type ViewMode = 'list' | 'edit' | 'view' | 'demo';
 
 function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('list');
@@ -21,6 +21,11 @@ function App() {
   const handleView = (workflow: Workflow) => {
     setSelectedWorkflow(workflow);
     setCurrentView('view');
+  };
+
+  const handleDemo = (workflow: Workflow) => {
+    setSelectedWorkflow(workflow);
+    setCurrentView('demo');
   };
 
   const handleBack = () => {
@@ -39,15 +44,16 @@ function App() {
               </div>
             </Layout.Header>
             <Layout.Content style={{ background: '#f0f2f5' }}>
-              <WorkflowList onEdit={handleEdit} onView={handleView} />
+              <WorkflowList onEdit={handleEdit} onView={handleView} onDemo={handleDemo} />
             </Layout.Content>
           </Layout>
         )}
-        {(currentView === 'edit' || currentView === 'view') && (
+        {(currentView === 'edit' || currentView === 'view' || currentView === 'demo') && (
           <WorkflowEditor 
             workflow={selectedWorkflow} 
             onBack={handleBack}
             readOnly={currentView === 'view'}
+            autoOpenPreview={currentView === 'demo'}
           />
         )}
       </AntdApp>
