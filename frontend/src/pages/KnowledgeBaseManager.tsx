@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, type FC } from 'react';
 import {
   Table, Button, Space, Card, message, Modal, Form, Input, Upload, Tabs, Popconfirm,
   Collapse, Tag, Slider, Switch, Select, Row, Col, Descriptions, Tooltip
@@ -47,7 +47,7 @@ interface RecallResult {
   totalChars: number;
 }
 
-const KnowledgeBaseManager: React.FC = () => {
+const KnowledgeBaseManager: FC = () => {
   const [activeTab, setActiveTab] = useState('kbs');
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);

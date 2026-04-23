@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type FC, type ReactNode } from 'react';
 
 // 参数定义
 export interface Param {
@@ -130,7 +130,7 @@ const defaultParams: Param[] = [
 ];
 
 // Provider 组件
-export const ParamPoolProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const ParamPoolProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [params, setParams] = useState<Param[]>(defaultParams);
   const [references, setReferences] = useState<ParamReference[]>([]);
   const [changeEvents, setChangeEvents] = useState<ParamChangeEvent[]>([]);
@@ -335,7 +335,11 @@ export const ParamPoolProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // 更新参数值（带同步）
   const updateParamValue = useCallback((paramId: string, value: any, source?: string) => {
-    updateParam(paramId, { value, ...(source ? { source: { value: source } } : {}) });
+    const updates: Partial<Param> = { value };
+    if (source) {
+      updates.source = source;
+    }
+    updateParam(paramId, updates);
   }, [updateParam]);
 
   // 同步指定节点的引用

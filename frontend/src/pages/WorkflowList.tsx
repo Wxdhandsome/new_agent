@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, type FC } from 'react';
 import { 
   Table, 
   Button, 
@@ -27,7 +27,7 @@ interface WorkflowListProps {
   onDemo: (workflow: Workflow) => void;
 }
 
-const WorkflowList: React.FC<WorkflowListProps> = ({ onEdit, onView, onDemo }) => {
+const WorkflowList: FC<WorkflowListProps> = ({ onEdit, onView, onDemo }) => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);

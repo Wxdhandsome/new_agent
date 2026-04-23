@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, type FC } from 'react';
 import { Table, Button, Space, Card, message, Modal, Form, Input, Tag, Popconfirm } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, EyeOutlined } from '@ant-design/icons';
 import { workflowApi } from '../api';
@@ -9,7 +9,7 @@ interface SimpleWorkflowListProps {
   onView: (workflow: Workflow) => void;
 }
 
-const SimpleWorkflowList: React.FC<SimpleWorkflowListProps> = ({ onEdit, onView }) => {
+const SimpleWorkflowList: FC<SimpleWorkflowListProps> = ({ onEdit, onView }) => {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);

@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useState, type FC } from 'react';
 import { Form, Input, Select, Button, Card, Divider, Row, Col } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { Node } from 'reactflow';
@@ -9,7 +9,7 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 // API 基础 URL
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
+const API_BASE_URL = (import.meta as ImportMeta).env.VITE_BACKEND_URL || 'http://localhost:8001';
 
 interface NodeConfigPanelProps {
   selectedNode: Node | null;
@@ -17,7 +17,7 @@ interface NodeConfigPanelProps {
 }
 
 // 开始节点配置
-const StartNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const StartNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -41,7 +41,7 @@ const StartNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> =
 };
 
 // 输入节点配置
-const InputNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const InputNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -88,7 +88,7 @@ const InputNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> =
 };
 
 // 大模型节点配置
-const LLMNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const LLMNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
   const { params } = useParamPool();
 
@@ -194,7 +194,7 @@ const LLMNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = (
 };
 
 // 条件分支节点配置
-const ConditionNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const ConditionNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -328,7 +328,7 @@ const ConditionNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void 
 };
 
 // 代码节点配置
-const CodeNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const CodeNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
   const { addReference, removeReference } = useParamPool();
 
@@ -625,7 +625,7 @@ const CodeNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = 
 };
 
 // 输出节点配置
-const OutputNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const OutputNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -659,7 +659,7 @@ const OutputNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> 
 };
 
 // RAG 知识库检索节点配置
-const RAGNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const RAGNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
   const [kbs, setKbs] = useState<any[]>([]);
   const { params } = useParamPool();
@@ -807,7 +807,7 @@ const RAGNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = (
 };
 
 // 结束节点配置
-const EndNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+const EndNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -837,7 +837,7 @@ const EndNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = (
 };
 
 // 主配置面板组件
-const NodeConfigPanel: React.FC<NodeConfigPanelProps> = ({ selectedNode, onUpdateNode }) => {
+const NodeConfigPanel: FC<NodeConfigPanelProps> = ({ selectedNode, onUpdateNode }) => {
   if (!selectedNode) {
     return (
       <div style={{ padding: '20px', textAlign: 'center', color: '#999' }}>

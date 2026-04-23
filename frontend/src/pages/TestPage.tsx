@@ -1,6 +1,6 @@
-import React from 'react';
+import { FC } from 'react';
 
-const TestPage: React.FC = () => {
+const TestPage: FC = () => {
   console.log('TestPage rendering');
   return (
     <div style={{ 

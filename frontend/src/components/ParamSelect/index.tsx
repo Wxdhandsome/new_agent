@@ -1,4 +1,4 @@
-import React from 'react';
+import type { CSSProperties, FC } from 'react';
 import { Select, Tag, Space } from 'antd';
 import { useParamPool } from '../../contexts/ParamPoolContext';
 
@@ -10,7 +10,7 @@ interface ParamSelectProps {
   disabled?: boolean;
   placeholder?: string;
   filterType?: 'string' | 'number' | 'boolean' | 'object' | 'all';
-  style?: React.CSSProperties;
+  style?: CSSProperties;
 }
 
 // 来源排序权重
@@ -31,7 +31,7 @@ const typeColors: Record<string, string> = {
   datetime: 'cyan',
 };
 
-const ParamSelect: React.FC<ParamSelectProps> = ({
+const ParamSelect: FC<ParamSelectProps> = ({
   value,
   onChange,
   disabled = false,

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect, type FC } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -117,11 +117,11 @@ const initialEdges = [
   },
 ];
 
-const SimpleWorkflowEditor: React.FC<SimpleWorkflowEditorProps> = ({ workflow, onBack }) => {
+const SimpleWorkflowEditor: FC<SimpleWorkflowEditorProps> = ({ workflow, onBack }) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
+  // const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
   const [workflowName, setWorkflowName] = useState(workflow?.workflowName || '新工作流');
 
   useEffect(() => {
@@ -205,7 +205,7 @@ const SimpleWorkflowEditor: React.FC<SimpleWorkflowEditorProps> = ({ workflow, o
         <Space style={{ marginLeft: 'auto' }}>
           <Button icon={<PlusOutlined />} onClick={handleAddNode}>添加节点</Button>
           <Button icon={<SaveOutlined />} type="primary" onClick={handleSave}>保存</Button>
-          <Button icon={<PlayCircleOutlined />} type="success" onClick={handleDemo}>演示</Button>
+          <Button icon={<PlayCircleOutlined />} type="primary" style={{ backgroundColor: '#52c41a' }} onClick={handleDemo}>演示</Button>
         </Space>
       </Header>
       <Layout>
@@ -231,7 +231,7 @@ const SimpleWorkflowEditor: React.FC<SimpleWorkflowEditorProps> = ({ workflow, o
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
-              onInit={setReactFlowInstance}
+              // onInit={setReactFlowInstance}
               nodeTypes={nodeTypes}
               fitView
             >

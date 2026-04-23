@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, type FC } from 'react';
 import { Modal, Button, Input, Card, Space, message } from 'antd';
 import { PlayCircleOutlined, SendOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
 import type { Node, Edge } from 'reactflow';
@@ -7,7 +7,7 @@ import { workflowApi } from '../../api';
 const { TextArea } = Input;
 
 // API 基础 URL
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
+const API_BASE_URL = (import.meta as ImportMeta).env.VITE_BACKEND_URL || 'http://localhost:8001';
 
 interface WorkflowPreviewProps {
   visible: boolean;
@@ -25,7 +25,7 @@ interface ChatMessage {
   isLoading?: boolean;
 }
 
-const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({
+const WorkflowPreview: FC<WorkflowPreviewProps> = ({
   visible,
   onClose,
   nodes,

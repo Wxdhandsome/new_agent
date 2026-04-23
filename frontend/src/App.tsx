@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ConfigProvider, Layout, App as AntdApp, Menu } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { ProjectOutlined, DatabaseOutlined } from '@ant-design/icons';

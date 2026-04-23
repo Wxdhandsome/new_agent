@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect, type FC } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -15,8 +15,8 @@ import ReactFlow, {
   Node,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Layout, Button, Space, message, Input, Form } from 'antd';
-import { PlusOutlined, SaveOutlined, PlayCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { Layout, Button, Space, message, Input } from 'antd';
+import { SaveOutlined, PlayCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { workflowApi } from '../api';
 import type { Workflow } from '../types';
 import NodeConfigPanel from '../components/NodeConfig';
@@ -32,8 +32,8 @@ interface WorkflowEditorProps {
   autoOpenPreview?: boolean;
 }
 
-// 节点类型定义
-const nodeTypes = {
+// 节点类型定义（用于React Flow）
+const nodeTypeMap = {
   start: 'start',
   input: 'input',
   llm: 'llm',
@@ -101,7 +101,7 @@ const LLMNode = ({ data }: any) => {
 // 节点组件 - 条件分支节点
 const ConditionNode = ({ data }: any) => {
   const conditions = data.conditions || [];
-  const totalBranches = conditions.length + 1; // 条件分支 + 默认分支
+  // const totalBranches = conditions.length + 1; // 条件分支 + 默认分支 (暂不使用)
 
   return (
     <div style={{ 
@@ -315,8 +315,8 @@ const FlowCanvas = ({
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const { project } = useReactFlow();
-  const { addParam, removeParam, params } = useParamPool();
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const { addParam } = useParamPool();
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const isInitializedRef = useRef(false);
   const hasUserInteractionRef = useRef(false);
@@ -736,7 +736,7 @@ const FlowCanvas = ({
 };
 
 // 主组件
-const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ workflow: initialWorkflow, onBack, readOnly = false, autoOpenPreview = false }) => {
+const WorkflowEditor: FC<WorkflowEditorProps> = ({ workflow: initialWorkflow, onBack, readOnly = false, autoOpenPreview = false }) => {
   const [workflow, setWorkflow] = useState<Workflow | null>(initialWorkflow || null);
   const [workflowName, setWorkflowName] = useState(initialWorkflow?.workflowName || '新工作流');
 
