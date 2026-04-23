@@ -1,10 +1,13 @@
 import axios from 'axios';
 import type { Workflow, WorkflowCreateRequest, WorkflowUpdateRequest } from '../types';
 
-// 直接使用后端地址，不使用代理
+// 从环境变量读取后端地址，默认为 localhost:8001
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
+
+// 创建 axios 实例
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
-  timeout: 30000,  // 增加超时时间到 30 秒
+  baseURL: `${BACKEND_URL}/api`,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -77,6 +80,70 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+export const kbApi = {
+  list: async () => {
+    const response = await api.get('/kb');
+    return response.data;
+  },
+
+  get: async (kbId: string) => {
+    const response = await api.get(`/kb/${kbId}`);
+    return response.data;
+  },
+
+  create: async (data: any) => {
+    const response = await api.post('/kb', data);
+    return response.data;
+  },
+
+  update: async (kbId: string, data: any) => {
+    const response = await api.put(`/kb/${kbId}`, data);
+    return response.data;
+  },
+
+  delete: async (kbId: string) => {
+    const response = await api.delete(`/kb/${kbId}`);
+    return response.data;
+  },
+
+  getDocuments: async (kbId: string) => {
+    const response = await api.get(`/kb/${kbId}/documents`);
+    return response.data;
+  },
+
+  uploadDocument: async (kbId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('kb_id', kbId);
+    formData.append('file', file);
+    const response = await fetch(`${api.defaults.baseURL}/kb/${kbId}/documents/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) throw new Error('上传失败');
+    return response.json();
+  },
+
+  deleteDocument: async (docId: string) => {
+    const response = await api.delete(`/kb/documents/${docId}`);
+    return response.data;
+  },
+
+  recall: async (kbId: string, params: {
+    query: string;
+    retrievalMode?: string;
+    topK?: number;
+    candidateK?: number;
+    denseWeight?: number;
+    sparseWeight?: number;
+    minScore?: number;
+    enableRerank?: boolean;
+    maxChars?: number;
+  }) => {
+    const response = await api.post(`/kb/${kbId}/recall`, params);
+    return response.data;
+  },
+};
 
 export const workflowApi = {
   list: async () => {
@@ -169,7 +236,7 @@ export const workflowApi = {
     });
 
     // 发起 SSE 请求
-    fetch('http://localhost:8000/api/workflow/chat/stream', {
+    fetch(`${BACKEND_URL}/api/workflow/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

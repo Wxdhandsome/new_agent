@@ -39,6 +39,7 @@ const nodeTypes = {
   llm: 'llm',
   condition: 'condition',
   code: 'code',
+  rag: 'rag',
   output: 'output',
   end: 'end',
 };
@@ -191,6 +192,29 @@ const CodeNode = ({ data }: any) => {
   );
 };
 
+// 节点组件 - RAG 知识库检索节点
+const RAGNode = ({ data }: any) => {
+  return (
+    <div style={{ 
+      padding: '10px', 
+      background: '#fff', 
+      border: '2px solid #2f54eb', 
+      borderRadius: '8px', 
+      minWidth: '160px', 
+      textAlign: 'center' 
+    }}>
+      <Handle type="target" position={Position.Top} style={{ background: '#2f54eb' }} />
+      <div style={{ fontWeight: 'bold', color: '#2f54eb' }}>📚 {data.label || '知识库检索'}</div>
+      {data.kbName && (
+        <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
+          {data.kbName}
+        </div>
+      )}
+      <Handle type="source" position={Position.Bottom} style={{ background: '#2f54eb' }} />
+    </div>
+  );
+};
+
 // 节点组件 - 输出节点
 const OutputNode = ({ data }: any) => {
   return (
@@ -233,6 +257,7 @@ const nodeTypeComponents = {
   llm: LLMNode,
   condition: ConditionNode,
   code: CodeNode,
+  rag: RAGNode,
   output: OutputNode,
   end: EndNode,
 };
@@ -502,6 +527,7 @@ const FlowCanvas = ({
       llm: '大模型',
       condition: '条件分支',
       code: '代码',
+      rag: '知识库检索',
       output: '输出',
       end: '结束',
     };
@@ -546,6 +572,18 @@ const FlowCanvas = ({
               description: `代码节点 ${node.data?.label || node.id} 的输出参数`,
             });
           }
+        });
+      }
+
+      // RAG 节点：收集检索结果参数
+      if (node.type === 'rag') {
+        const outputVar = node.data?.outputVar || 'retrieved_result';
+        addParam({
+          id: outputVar,
+          label: `${outputVar} (来自${node.data?.label || '知识库检索'})`,
+          type: 'object',
+          source: '知识库检索',
+          description: `RAG 节点 ${node.data?.label || node.id} 的检索结果`,
         });
       }
     });
@@ -654,6 +692,7 @@ const FlowCanvas = ({
             <DraggableNode type="llm" label="大模型节点" icon="🤖" color="#722ed1" />
             <DraggableNode type="condition" label="条件分支" icon="🔀" color="#fa8c16" />
             <DraggableNode type="code" label="代码节点" icon="💻" color="#13c2c2" />
+            <DraggableNode type="rag" label="知识库检索" icon="📚" color="#2f54eb" />
             <DraggableNode type="output" label="输出节点" icon="📤" color="#eb2f96" />
             <DraggableNode type="end" label="结束节点" icon="🏁" color="#ff4d4f" />
           </div>

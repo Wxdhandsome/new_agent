@@ -6,6 +6,9 @@ import { workflowApi } from '../../api';
 
 const { TextArea } = Input;
 
+// API 基础 URL
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
+
 interface WorkflowPreviewProps {
   visible: boolean;
   onClose: () => void;
@@ -86,21 +89,21 @@ const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({
     prevVisibleRef.current = visible;
   }, [visible]);
 
-  const getStartNode = useCallback(() => {
+  const getStartNode = useCallback((): Node | undefined => {
     const startNode = nodes.find(n => n.type === 'start');
     console.log('[WorkflowPreview] Nodes:', nodes.length, 'Start node:', startNode?.id);
     return startNode;
   }, [nodes]);
 
   // 获取普通节点的下一个节点（单出口）
-  const getNextNode = useCallback((currentId: string) => {
+  const getNextNode = useCallback((currentId: string): Node | null => {
     const edge = edges.find(e => e.source === currentId);
     if (!edge) return null;
-    return nodes.find(n => n.id === edge.target);
+    return nodes.find(n => n.id === edge.target) || null;
   }, [edges, nodes]);
 
   // 获取条件分支的下一个节点（根据条件索引或默认分支）
-  const getConditionNextNode = useCallback((conditionNodeId: string, conditionIndex: number) => {
+  const getConditionNextNode = useCallback((conditionNodeId: string, conditionIndex: number): Node | null => {
     // conditionIndex: 0-n 表示第几个条件，-1 表示默认分支
     let edge;
     if (conditionIndex === -1) {
@@ -111,7 +114,7 @@ const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({
       const handleId = `cond_${conditionIndex}`;
       edge = edges.find(e => e.source === conditionNodeId && e.sourceHandle === handleId);
     }
-    
+
     // 如果没找到特定 handle 的边，尝试查找没有 sourceHandle 的边（兼容旧数据）
     if (!edge) {
       const allEdges = edges.filter(e => e.source === conditionNodeId);
@@ -122,9 +125,9 @@ const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({
         edge = allEdges[conditionIndex];
       }
     }
-    
+
     if (!edge) return null;
-    return nodes.find(n => n.id === edge?.target);
+    return nodes.find(n => n.id === edge?.target) || null;
   }, [edges, nodes]);
 
   // 评估条件表达式
@@ -321,6 +324,110 @@ const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({
             });
           }
         }
+        return getNextNode(currentNode.id);
+      }
+
+      case 'rag': {
+        // RAG 知识库检索节点
+        const showOutput = currentNode.data?.showOutput !== false;
+        const kbId = currentNode.data?.kbId;
+        const userQuestionVar = currentNode.data?.userQuestionVar || 'user_input';
+        const outputVar = currentNode.data?.outputVar || 'retrieved_result';
+
+        let loadingMsgId: string | null = null;
+        if (showOutput) {
+          loadingMsgId = addMessage('assistant', '', {
+            nodeName: currentNode.data?.label || '知识库检索',
+            isLoading: true,
+          });
+        }
+
+        try {
+          // 获取用户问题（从上下文变量中取）
+          const userQuestion = contextRef.current[userQuestionVar] || contextRef.current.user_input || '';
+          
+          if (!kbId) {
+            throw new Error('未配置检索知识库');
+          }
+          if (!userQuestion.trim()) {
+            throw new Error('用户问题为空，无法执行检索');
+          }
+
+          console.log('[RAG Node] Executing recall search:', { kbId, userQuestion, outputVar });
+
+          // 调用后端 RAG 检索接口
+          const recallResult: any = await new Promise((resolve, reject) => {
+            fetch(`${API_BASE_URL}/api/kb/${kbId}/recall`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                query: userQuestion,
+                retrieval_mode: currentNode.data?.retrievalMode || 'hybrid',
+                top_k: currentNode.data?.topK ?? 6,
+                candidate_k: currentNode.data?.candidateK ?? 20,
+                dense_weight: currentNode.data?.denseWeight ?? 0.5,
+                sparse_weight: currentNode.data?.sparseWeight ?? 0.5,
+                min_score: currentNode.data?.minScore ?? 0.6,
+                enable_rerank: currentNode.data?.enableRerank ?? false,
+                max_chars: currentNode.data?.maxChars ?? 15000,
+              }),
+            })
+              .then(res => res.json())
+              .then(data => {
+                if (data.detail) reject(new Error(data.detail));
+                else resolve(data);
+              })
+              .catch(reject);
+          });
+
+          // 提取纯文字内容（只保留 content，用于后续节点）
+          const items = recallResult.items || [];
+          const retrievedText = items
+            .map((item: any) => item.content?.trim())
+            .filter(Boolean)
+            .join('\n\n');
+          
+          // 保存纯文字内容到输出变量
+          contextRef.current[outputVar] = retrievedText;
+          
+          // 同时保存结构化结果供调试使用
+          contextRef.current._rag_raw = {
+            query: userQuestion,
+            kb_id: kbId,
+            items,
+            total: recallResult.total || items.length,
+            avg_similarity: recallResult.avg_similarity,
+          };
+
+          console.log('[RAG Node] Retrieved text length:', retrievedText.length);
+
+          // 显示结果
+          if (showOutput && loadingMsgId) {
+            const sources = [...new Set(items.map((item: any) => item.source).filter(Boolean))];
+            const outputContent = [
+              `<strong>【知识库检索】</strong>从 ${sources.join(', ') || '知识库'} 找到 ${items.length} 条相关内容`,
+              ``,
+              retrievedText.slice(0, 2000) + (retrievedText.length > 2000 ? '\n\n...(内容已截断)' : '')
+            ].join('\n');
+            
+            updateMessage(loadingMsgId, {
+              content: outputContent,
+              isLoading: false,
+            });
+          }
+        } catch (error: any) {
+          console.error('[RAG Node] Error:', error);
+          contextRef.current[outputVar] = '';
+          contextRef.current._rag_raw = { error: error.message };
+          
+          if (showOutput && loadingMsgId) {
+            updateMessage(loadingMsgId, {
+              content: `【知识库检索】检索失败：${error.message}`,
+              isLoading: false,
+            });
+          }
+        }
+        
         return getNextNode(currentNode.id);
       }
 

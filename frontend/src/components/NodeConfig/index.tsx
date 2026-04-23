@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { Form, Input, Select, Button, Card, Divider, Row, Col } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { Node } from 'reactflow';
@@ -7,6 +7,9 @@ import { useParamPool } from '../../contexts/ParamPoolContext';
 
 const { TextArea } = Input;
 const { Option } = Select;
+
+// API 基础 URL
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
 
 interface NodeConfigPanelProps {
   selectedNode: Node | null;
@@ -655,6 +658,154 @@ const OutputNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> 
   );
 };
 
+// RAG 知识库检索节点配置
+const RAGNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
+  const [form] = Form.useForm();
+  const [kbs, setKbs] = useState<any[]>([]);
+  const { params } = useParamPool();
+
+  useEffect(() => {
+    form.setFieldsValue({
+      label: node.data?.label || '知识库检索',
+      userQuestionVar: node.data?.userQuestionVar || 'user_input',
+      kbId: node.data?.kbId,
+      outputVar: node.data?.outputVar || 'retrieved_result',
+      retrievalMode: node.data?.retrievalMode || 'hybrid',
+      topK: node.data?.topK ?? 6,
+      candidateK: node.data?.candidateK ?? 20,
+      denseWeight: node.data?.denseWeight ?? 0.5,
+      sparseWeight: node.data?.sparseWeight ?? 0.5,
+      minScore: node.data?.minScore ?? 0.6,
+      enableRerank: node.data?.enableRerank ?? false,
+      maxChars: node.data?.maxChars ?? 15000,
+      showOutput: node.data?.showOutput ?? true,
+      ...node.data,
+    });
+  }, [node, form]);
+
+  useEffect(() => {
+    // 加载知识库列表
+    fetch(`${API_BASE_URL}/api/kb`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setKbs(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleValuesChange = (_: any, allValues: any) => {
+    const selectedKb = kbs.find(k => k.kb_id === allValues.kbId);
+    onUpdate({
+      ...allValues,
+      kbName: selectedKb?.name || '',
+    });
+  };
+
+  return (
+    <Form
+      form={form}
+      layout="vertical"
+      onValuesChange={handleValuesChange}
+    >
+      <Form.Item label="节点名称" name="label" rules={[{ required: true }]}>
+        <Input placeholder="输入节点名称" />
+      </Form.Item>
+
+      <Divider orientation="left">检索设置</Divider>
+
+      <Form.Item label="用户问题变量" name="userQuestionVar" rules={[{ required: true }]}>
+        <Select placeholder="选择用户问题来源变量">
+          {params.filter(p => p.type === 'string').map(p => (
+            <Option key={p.id} value={p.id}>{p.label}</Option>
+          ))}
+          <Option value="user_input">user_input (用户输入)</Option>
+        </Select>
+      </Form.Item>
+
+      <Form.Item label="检索知识库" name="kbId" rules={[{ required: true }]}>
+        <Select placeholder="选择知识库">
+          {kbs.map(kb => (
+            <Option key={kb.kb_id} value={kb.kb_id}>{kb.name}</Option>
+          ))}
+        </Select>
+      </Form.Item>
+
+      <Form.Item label="输出变量名" name="outputVar" rules={[{ required: true }]}>
+        <Input placeholder="retrieved_result" />
+      </Form.Item>
+
+      <Form.Item 
+        label="在对话中显示输出" 
+        name="showOutput" 
+        initialValue={true}
+        extra="关闭后检索结果将不在对话界面中显示，仅保存到变量供后续节点使用"
+      >
+        <Select>
+          <Option value={true}>显示</Option>
+          <Option value={false}>隐藏</Option>
+        </Select>
+      </Form.Item>
+
+      <Divider orientation="left">高级检索配置</Divider>
+
+      <Form.Item label="检索模式" name="retrievalMode" initialValue="hybrid">
+        <Select>
+          <Option value="hybrid">混合检索 (dense + sparse)</Option>
+          <Option value="dense_only">仅向量检索</Option>
+          <Option value="sparse_only">仅关键词检索</Option>
+        </Select>
+      </Form.Item>
+
+      <Form.Item label="引用 TopN" name="topK" initialValue={6}>
+        <Input type="number" min={1} max={20} />
+      </Form.Item>
+
+      <Form.Item label="候选集大小" name="candidateK" initialValue={20}>
+        <Input type="number" min={1} max={50} />
+      </Form.Item>
+
+      <Form.Item label="最低相关度" name="minScore" initialValue={0.6}>
+        <Input type="number" min={0} max={1} step={0.05} />
+      </Form.Item>
+
+      <Form.Item label="检索器权重 (dense / sparse)" style={{ marginBottom: 0 }}>
+        <Row gutter={8}>
+          <Col span={12}>
+            <Form.Item name="denseWeight" initialValue={0.5}>
+              <Input type="number" min={0} max={1} step={0.1} addonBefore="Dense" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="sparseWeight" initialValue={0.5}>
+              <Input type="number" min={0} max={1} step={0.1} addonBefore="Sparse" />
+            </Form.Item>
+          </Col>
+        </Row>
+      </Form.Item>
+
+      <Form.Item label="检索结果重排" name="enableRerank" initialValue={false}>
+        <Select>
+          <Option value={true}>启用</Option>
+          <Option value={false}>禁用</Option>
+        </Select>
+      </Form.Item>
+
+      <Form.Item label="最多引用字符数" name="maxChars" initialValue={15000}>
+        <Input type="number" min={1000} max={50000} step={1000} />
+      </Form.Item>
+
+      <Form.Item>
+        <div style={{ padding: '8px', background: '#f0f0f0', borderRadius: '4px', fontSize: '12px' }}>
+          <strong>输出说明:</strong><br/>
+          <span style={{ color: '#666' }}>
+            检索结果将保存到指定的输出变量中，包含文档片段、来源、相关度得分等信息。
+          </span>
+        </div>
+      </Form.Item>
+    </Form>
+  );
+};
+
 // 结束节点配置
 const EndNodeConfig: React.FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node, onUpdate }) => {
   const [form] = Form.useForm();
@@ -715,6 +866,8 @@ const NodeConfigPanel: React.FC<NodeConfigPanelProps> = ({ selectedNode, onUpdat
         return <OutputNodeConfig node={selectedNode} onUpdate={handleUpdate} />;
       case 'end':
         return <EndNodeConfig node={selectedNode} onUpdate={handleUpdate} />;
+      case 'rag':
+        return <RAGNodeConfig node={selectedNode} onUpdate={handleUpdate} />;
       default:
         return <div style={{ padding: '20px', color: '#999' }}>未知节点类型</div>;
     }

@@ -10,6 +10,7 @@ class WorkflowState(BaseModel):
     llm_output: str = Field(default="", description="大模型输出内容")
     # 注意：代码节点的输出由用户自定义参数名，不再固定为 code_result
     custom_vars: Dict[str, Any] = Field(default_factory=dict, description="自定义扩展变量（包含代码节点输出等）")
+    retrieved_result: Optional[Dict[str, Any]] = Field(default=None, description="RAG 检索结果")
 
 
 class NodeExecutor:
@@ -125,6 +126,115 @@ class NodeExecutor:
 
         state_updates["custom_vars"] = next_custom_vars
         return state_updates
+
+    def rag_node(self, state: WorkflowState) -> Dict[str, Any]:
+        """RAG 知识库检索节点"""
+        from ..knowledge_base.service import recall_search
+        from ..core.database import SessionLocal
+
+        kb_id = self.node_data.get("kbId")
+        user_question_var = self.node_data.get("userQuestionVar", "user_input")
+        output_var = self.node_data.get("outputVar", "retrieved_result")
+        retrieval_mode = self.node_data.get("retrievalMode", "hybrid")
+        top_k = self.node_data.get("topK", 6)
+        candidate_k = self.node_data.get("candidateK", 20)
+        dense_weight = self.node_data.get("denseWeight", 0.5)
+        sparse_weight = self.node_data.get("sparseWeight", 0.5)
+        min_score = self.node_data.get("minScore", 0.6)
+        enable_rerank = self.node_data.get("enableRerank", False)
+        max_chars = self.node_data.get("maxChars", 15000)
+        show_output = self.node_data.get("showOutput", True)
+
+        # 获取用户问题
+        if user_question_var == "user_input":
+            query = state.user_input
+        else:
+            query = state.custom_vars.get(user_question_var, "")
+
+        if not kb_id:
+            result_text = ""
+            if show_output:
+                result_text = "【知识库检索】未配置知识库"
+            return {
+                "custom_vars": {
+                    **state.custom_vars,
+                    output_var: result_text,
+                },
+                "node_output": result_text if show_output else None,
+            }
+
+        try:
+            db = SessionLocal()
+            result = recall_search(
+                db=db,
+                kb_id=kb_id,
+                query=query,
+                retrieval_mode=retrieval_mode,
+                top_k=top_k,
+                candidate_k=candidate_k,
+                dense_weight=dense_weight,
+                sparse_weight=sparse_weight,
+                min_score=min_score,
+                enable_rerank=enable_rerank,
+                max_chars=max_chars,
+            )
+            db.close()
+
+            # 提取纯文字内容，拼接所有检索结果的 content
+            items = result.get("items", [])
+            if items:
+                # 只保留文字内容，每段之间用换行分隔
+                text_parts = []
+                for item in items:
+                    content = item.get("content", "").strip()
+                    if content:
+                        text_parts.append(content)
+                result_text = "\n\n".join(text_parts)
+            else:
+                result_text = ""
+
+            # 构建节点输出（用于对话框显示）
+            node_output = None
+            if show_output:
+                if items:
+                    sources = [item.get("source", "未知") for item in items]
+                    unique_sources = list(dict.fromkeys(sources))  # 去重保持顺序
+                    node_output = f"【知识库检索】从 {', '.join(unique_sources)} 找到 {len(items)} 条相关内容\n\n{result_text}"
+                else:
+                    node_output = "【知识库检索】未找到相关内容"
+
+            if output_var == "retrieved_result":
+                return {
+                    "retrieved_result": result_text,
+                    "node_output": node_output,
+                }
+
+            return {
+                "custom_vars": {
+                    **state.custom_vars,
+                    output_var: result_text,
+                },
+                "node_output": node_output,
+            }
+        except Exception as e:
+            error_msg = f"检索失败: {str(e)}"
+            if show_output:
+                node_output = f"【知识库检索】{error_msg}"
+            else:
+                node_output = None
+            
+            if output_var == "retrieved_result":
+                return {
+                    "retrieved_result": "",
+                    "node_output": node_output,
+                }
+            return {
+                "custom_vars": {
+                    **state.custom_vars,
+                    output_var: "",
+                },
+                "node_output": node_output,
+            }
 
     def condition_node(self, state: WorkflowState) -> str:
         conditions = self.node_data.get("conditions", [])
@@ -287,6 +397,8 @@ def build_langgraph_graph(graph_data: Dict[str, Any]) -> StateGraph:
             workflow.add_node(node_id, executor.llm_node)
         elif node_type == "code":
             workflow.add_node(node_id, executor.code_node)
+        elif node_type == "rag":
+            workflow.add_node(node_id, executor.rag_node)
         elif node_type == "condition":
             workflow.add_node(node_id, executor.condition_node)
         elif node_type == "end":

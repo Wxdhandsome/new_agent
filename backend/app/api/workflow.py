@@ -20,7 +20,7 @@ from ..services import (
     get_workflow_run,
     update_workflow_run_status,
 )
-from ..langgraph.workflow_engine import execute_workflow
+from ..langgraph_wf.workflow_engine import execute_workflow
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 
@@ -193,7 +193,7 @@ def api_execute_code(request: CodeExecuteRequest):
     - 不返回 WorkflowState 包装结构（如 custom_vars）
     """
     try:
-        from ..langgraph.workflow_engine import NodeExecutor
+        from ..langgraph_wf.workflow_engine import NodeExecutor
 
         # 构建执行器
         node_config = {
@@ -338,7 +338,7 @@ async def generate_stream_response(request: ChatStreamRequest) -> AsyncGenerator
     try:
         api_key = settings.API_KEY
         base_url = settings.BASE_URL
-        
+
         if not api_key or not base_url:
             # 如果没有配置，返回模拟流式响应
             mock_content = f"[模拟流式响应] 收到消息：{request.messages[-1].content if request.messages else '无内容'}"

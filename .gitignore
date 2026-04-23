@@ -1,4 +1,6 @@
+# ===========================================
 # Python
+# ===========================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,48 +21,96 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
+.mypy_cache/
 
+# ===========================================
 # Virtual Environments
+# ===========================================
 venv/
 ENV/
 env/
 .venv/
 
+# ===========================================
 # IDEs
+# ===========================================
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
 .DS_Store
+*.sublime-project
+*.sublime-workspace
 
-# Environment variables
+# ===========================================
+# Environment variables (敏感配置)
+# ===========================================
 .env
 .env.local
 .env.*.local
+!.env.example
 
-# Database
+# ===========================================
+# Database & Data
+# ===========================================
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
 
+# 上传文件目录
+uploads/
+backend/uploads/
+
+# Milvus 数据（如果使用本地 Milvus）
+milvus_data/
+
+# ===========================================
 # Logs
+# ===========================================
 logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
+# ===========================================
 # Backend specific
+# ===========================================
 backend/__pycache__/
 backend/**/__pycache__/
 backend/*.db
+backend/*.db-journal
 backend/.env
 
+# ===========================================
 # Frontend specific
+# ===========================================
 frontend/node_modules/
 frontend/dist/
 frontend/dist-ssr/
 frontend/*.local
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 
+# ===========================================
 # Misc
+# ===========================================
 *.bak
 *.tmp
 .cache/
+*.pid
+*.seed
+*.pid.lock
+
+# 测试覆盖率
+coverage/
+htmlcov/
+.coverage
+
+# 临时文件
+tmp/
+temp/
