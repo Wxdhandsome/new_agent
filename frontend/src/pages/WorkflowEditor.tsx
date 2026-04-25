@@ -536,26 +536,30 @@ const FlowCanvas = ({
 
   // 收集节点参数到参数池
   useEffect(() => {
-    // 定义固定参数名映射（输入节点和大模型节点使用固定名称）
-    const fixedParamNames: Record<string, { id: string; label: string }> = {
-      input: { id: 'user_input', label: '用户输入' },
-      llm: { id: 'llm_output', label: '大模型输出' },
-    };
-
     // 收集节点参数
     nodes.forEach(node => {
-      const paramConfig = fixedParamNames[node.type || ''];
-      if (paramConfig) {
-        const paramType = node.type === 'input'
-          ? (node.data.inputType === 'number' ? 'number' : 'string')
-          : 'string';
-
+      // 输入节点：每个输入节点有独立的参数
+      if (node.type === 'input') {
+        const paramType = node.data.inputType === 'number' ? 'number' : 'string';
+        const nodeLabel = node.data?.label || '输入';
         addParam({
-          id: paramConfig.id,
-          label: paramConfig.label,
+          id: `user_input_${node.id}`,
+          label: `用户输入 (来自${nodeLabel})`,
           type: paramType as any,
-          source: getNodeLabel(node.type || ''),
-          description: `来自${getNodeLabel(node.type || '')}节点`,
+          source: '输入节点',
+          description: `来自${nodeLabel}节点 (ID: ${node.id})`,
+        });
+      }
+
+      // 大模型节点：每个大模型节点有独立的参数
+      if (node.type === 'llm') {
+        const nodeLabel = node.data?.label || '大模型';
+        addParam({
+          id: `llm_output_${node.id}`,
+          label: `大模型输出 (来自${nodeLabel})`,
+          type: 'string',
+          source: '大模型节点',
+          description: `来自${nodeLabel}节点 (ID: ${node.id})`,
         });
       }
       

@@ -69,18 +69,27 @@ def update_kb(db: Session, kb_id: str, name: Optional[str] = None, description: 
 
 
 def delete_kb(db: Session, kb_id: str) -> bool:
-    """删除知识库（级联删除文档和分块）。"""
+    """删除知识库（级联删除文档、分块、物理文件和 Milvus 向量）。"""
     kb = get_kb(db, kb_id)
     if not kb:
         return False
 
-    # 级联删除 chunks → documents → knowledge_base
+    # 1. 先获取该知识库下的所有文档，用于删除物理文件
+    docs = list_documents(db, kb_id)
+    for doc in docs:
+        if doc.path and os.path.exists(doc.path):
+            try:
+                os.remove(doc.path)
+            except Exception as exc:
+                print(f"[WARNING] 删除物理文件失败: {doc.path}, 错误: {exc}")
+
+    # 2. 级联删除 chunks → documents → knowledge_base
     db.query(DocumentChunk).filter(DocumentChunk.kb_id == kb_id).delete()
     db.query(Document).filter(Document.kb_id == kb_id).delete()
     db.delete(kb)
     db.commit()
 
-    # 同步删除 Milvus 向量
+    # 3. 同步删除 Milvus 向量
     try:
         milvus_ops.delete_vectors_for_kb(kb_id)
     except Exception as exc:
@@ -120,28 +129,36 @@ def list_documents(db: Session, kb_id: str) -> List[Document]:
 
 
 def delete_document(db: Session, doc_id: str) -> Optional[Document]:
-    """删除文档（同时删除 Milvus 向量和 chunk 记录）。"""
+    """删除文档（同时删除物理文件、Milvus 向量和 chunk 记录）。"""
     doc = get_document(db, doc_id)
     if not doc:
         return None
 
-    # 删除物理文件
-    if doc.path and os.path.exists(doc.path):
-        os.remove(doc.path)
+    kb_id = doc.kb_id
+    filename = doc.filename
+    file_path = doc.path
 
-    # 删除 Milvus 向量
+    # 1. 删除 Milvus 向量（先删向量，避免数据库删了但向量还在）
     try:
-        milvus_ops.delete_vectors_for_doc(doc.kb_id, doc.filename)
+        milvus_ops.delete_vectors_for_doc(kb_id, filename)
     except Exception as exc:
         print(f"[WARNING] 删除 Milvus 向量失败: {exc}")
 
-    # 删除 SQLite chunk 记录
+    # 2. 删除 SQLite 记录（chunks 和 document）
     db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).delete()
     db.delete(doc)
     db.commit()
 
-    # 更新统计
-    _update_kb_counts(db, doc.kb_id)
+    # 3. 删除物理文件（最后删文件，即使失败不影响数据库一致性）
+    if file_path and os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            print(f"[INFO] 已删除物理文件: {file_path}")
+        except Exception as exc:
+            print(f"[WARNING] 删除物理文件失败: {file_path}, 错误: {exc}")
+
+    # 4. 更新知识库统计
+    _update_kb_counts(db, kb_id)
 
     return doc
 

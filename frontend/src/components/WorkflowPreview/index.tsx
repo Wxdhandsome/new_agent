@@ -218,11 +218,15 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
             chatMessages.push({ role: 'system', content: systemPrompt });
           }
           
-          // 替换模板中的变量
-          const formattedPrompt = promptTemplate.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
-            const value = contextRef.current[key] || match;
-            console.log(`[LLM Node] Replacing {{${key}}} with:`, value);
-            return value;
+          // 替换模板中的变量（支持带下划线的变量名）
+          const formattedPrompt = promptTemplate.replace(/\{\{([\w_]+)\}\}/g, (match: string, key: string) => {
+            const value = contextRef.current[key];
+            if (value !== undefined && value !== null) {
+              console.log(`[LLM Node] Replacing {{${key}}} with:`, value);
+              return String(value);
+            }
+            console.log(`[LLM Node] Variable {{${key}}} not found, keeping original`);
+            return match;
           });
           
           console.log('[LLM Node] formattedPrompt:', formattedPrompt);
@@ -644,8 +648,11 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
         // 获取最终输出内容（严格语义：不做隐式解引用）
         let finalOutput = '';
         if (template) {
-          finalOutput = template.replace(/\{\{(\w+)\}\}/g, (_match: string, key: string) => {
-            return stringifyValue(contextRef.current[key]);
+          // 使用 [\w_]+ 匹配变量名（支持字母、数字、下划线）
+          finalOutput = template.replace(/\{\{([\w_]+)\}\}/g, (_match: string, key: string) => {
+            const value = contextRef.current[key];
+            console.log(`[Output Node] Replacing {{${key}}} with:`, value);
+            return stringifyValue(value);
           });
         } else if (outputParam) {
           finalOutput = stringifyValue(contextRef.current[outputParam]);
@@ -766,13 +773,25 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
 
     // 1. 先显示用户输入
     addMessage('user', inputValue);
+    
+    // 2. 保存用户输入到通用变量和当前输入节点的专用变量
     contextRef.current.user_input = inputValue;
-    console.log('[handleUserInput] user_input set to:', inputValue);
+    
+    // 获取当前输入节点的变量名并保存值
+    if (currentNodeId) {
+      const currentNode = nodes.find(n => n.id === currentNodeId);
+      if (currentNode && currentNode.type === 'input') {
+        const varName = currentNode.data?.varName || `user_input_${currentNodeId}`;
+        contextRef.current[varName] = inputValue;
+        console.log(`[handleUserInput] Saved to ${varName}:`, inputValue);
+      }
+    }
+    
     console.log('[handleUserInput] contextRef:', contextRef.current);
     setInputValue('');
     setIsRunning(true);
 
-    // 2. 继续执行后续节点
+    // 3. 继续执行后续节点
     if (currentNodeId) {
       let nextNode = getNextNode(currentNodeId);
 
@@ -787,7 +806,7 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
     if (isMountedRef.current && currentNodeId === null) {
       setIsRunning(false);
     }
-  }, [inputValue, currentNodeId, getNextNode, addMessage, executeNode]);
+  }, [inputValue, currentNodeId, getNextNode, addMessage, executeNode, nodes]);
 
   const showInput = !isRunning && currentNodeId !== null;
   const showStartButton = !isRunning && currentNodeId === null && messages.length === 0;

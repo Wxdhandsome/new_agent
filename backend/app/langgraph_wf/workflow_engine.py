@@ -5,12 +5,13 @@ import json
 
 
 class WorkflowState(BaseModel):
-    user_input: str = Field(default="", description="用户输入内容")
+    # 保留固定字段用于兼容性，但主要使用 custom_vars 存储动态变量
+    user_input: str = Field(default="", description="用户输入内容（兼容旧版本）")
     user_intent: str = Field(default="", description="大模型识别的用户意图")
-    llm_output: str = Field(default="", description="大模型输出内容")
-    # 注意：代码节点的输出由用户自定义参数名，不再固定为 code_result
-    custom_vars: Dict[str, Any] = Field(default_factory=dict, description="自定义扩展变量（包含代码节点输出等）")
-    retrieved_result: Optional[Dict[str, Any]] = Field(default=None, description="RAG 检索结果")
+    llm_output: str = Field(default="", description="大模型输出内容（兼容旧版本）")
+    # 主要存储区：所有动态变量（输入节点、大模型节点、代码节点、RAG节点输出）
+    custom_vars: Dict[str, Any] = Field(default_factory=dict, description="自定义扩展变量（包含各节点输出）")
+    retrieved_result: Optional[Dict[str, Any]] = Field(default=None, description="RAG 检索结果（兼容旧版本）")
 
 
 class NodeExecutor:
@@ -19,12 +20,14 @@ class NodeExecutor:
         self.node_data = node_config.get("data", {})
 
     def input_node(self, state: WorkflowState) -> Dict[str, Any]:
-        var_name = self.node_data.get("varName", "user_input")
-        input_value = state.user_input if var_name == "user_input" else state.custom_vars.get(var_name, "")
+        # 获取变量名，默认使用动态命名格式
+        node_id = self.config.get("id", "")
+        var_name = self.node_data.get("varName") or f"user_input_{node_id}"
+        
+        # 输入值从 custom_vars 中获取（由前端传入）
+        input_value = state.custom_vars.get(var_name, "")
 
-        if var_name == "user_input":
-            return {"user_input": input_value}
-
+        # 将所有输入节点输出保存到 custom_vars
         return {
             "custom_vars": {
                 **state.custom_vars,
@@ -33,25 +36,37 @@ class NodeExecutor:
         }
 
     def llm_node(self, state: WorkflowState) -> Dict[str, Any]:
+        import re
+        
         prompt_template = self.node_data.get("promptTemplate") or self.node_data.get("prompt", "")
 
+        # 构建上下文，优先使用 custom_vars 中的动态变量
         context = {
             **state.model_dump(),
             **state.custom_vars,
         }
+        
+        # 替换 {{variable}} 格式的变量
+        def replace_var(match):
+            var_name = match.group(1)
+            if var_name in context:
+                return str(context[var_name])
+            return match.group(0)
+        
         try:
-            formatted_prompt = prompt_template.format(**context)
+            formatted_prompt = re.sub(r'\{\{([\w_]+)\}\}', replace_var, prompt_template)
         except Exception:
             formatted_prompt = prompt_template
 
         model_name = self.node_data.get("model", "Qwen3-32B-FP8")
         temperature = self.node_data.get("temperature", 0.7)
         llm_result = self._call_llm_api(model_name, formatted_prompt, temperature)
-        output_var = self.node_data.get("outputVar", "llm_output")
+        
+        # 获取输出变量名，默认使用动态命名格式
+        node_id = self.config.get("id", "")
+        output_var = self.node_data.get("outputVar") or f"llm_output_{node_id}"
 
-        if output_var == "llm_output":
-            return {"llm_output": llm_result}
-
+        # 将所有大模型节点输出保存到 custom_vars
         return {
             "custom_vars": {
                 **state.custom_vars,
@@ -75,21 +90,28 @@ class NodeExecutor:
                 if source_type == "引用":
                     # 从上下文引用变量（使用 referencedParamId 获取实际参数值）
                     ref_param_id = var_config.get("referencedParamId", var_name)
-                    state_value = getattr(state, ref_param_id, None)
-                    if state_value is not None:
-                        exec_params[var_name] = state_value
+                    # 优先从 custom_vars 获取（支持动态变量名如 user_input_xxx）
+                    if ref_param_id in state.custom_vars:
+                        exec_params[var_name] = state.custom_vars[ref_param_id]
+                    elif hasattr(state, ref_param_id):
+                        exec_params[var_name] = getattr(state, ref_param_id)
                     else:
-                        exec_params[var_name] = state.custom_vars.get(ref_param_id)
+                        exec_params[var_name] = None
                 else:
                     # 使用用户输入或上下文中的值
-                    if hasattr(state, var_name):
+                    if var_name in state.custom_vars:
+                        exec_params[var_name] = state.custom_vars[var_name]
+                    elif hasattr(state, var_name):
                         exec_params[var_name] = getattr(state, var_name)
                     else:
-                        exec_params[var_name] = state.custom_vars.get(var_name)
+                        exec_params[var_name] = None
             else:
                 # 兼容旧格式（字符串列表）
                 var_name = str(var_config)
-                exec_params[var_name] = state.model_dump().get(var_name)
+                if var_name in state.custom_vars:
+                    exec_params[var_name] = state.custom_vars[var_name]
+                else:
+                    exec_params[var_name] = getattr(state, var_name, None)
         
         # 执行代码
         code_result = self._run_code_in_sandbox(code_content, exec_params)
@@ -145,9 +167,9 @@ class NodeExecutor:
         max_chars = self.node_data.get("maxChars", 15000)
         show_output = self.node_data.get("showOutput", True)
 
-        # 获取用户问题
+        # 获取用户问题：优先从 custom_vars 获取，支持动态变量名
         if user_question_var == "user_input":
-            query = state.user_input
+            query = state.user_input or state.custom_vars.get(user_question_var, "")
         else:
             query = state.custom_vars.get(user_question_var, "")
 
@@ -239,12 +261,68 @@ class NodeExecutor:
     def condition_node(self, state: WorkflowState) -> str:
         conditions = self.node_data.get("conditions", [])
         default_target = self.node_data.get("defaultTarget", END)
+        
+        # 构建上下文，确保 custom_vars 中的动态变量可被访问
+        context = {
+            **state.model_dump(),
+            **state.custom_vars,  # 将动态变量展开到上下文顶层
+        }
+        
         for condition in conditions:
             expression = condition.get("expression", "")
             target_node = condition.get("targetNode", END)
-            if self._eval_condition_expression(expression, state.model_dump()):
+            if self._eval_condition_expression(expression, context):
                 return target_node
         return default_target
+
+    def output_node(self, state: WorkflowState) -> Dict[str, Any]:
+        """输出节点：根据配置的参数或模板生成输出内容"""
+        import re
+        
+        output_param = self.node_data.get("outputParam")
+        template = self.node_data.get("template", "")
+        output_format = self.node_data.get("format", "text")
+        
+        # 构建上下文，包含所有变量
+        context = {
+            **state.model_dump(),
+            **state.custom_vars,
+        }
+        
+        output_content = ""
+        
+        # 如果配置了模板，优先使用模板
+        if template:
+            try:
+                # 将 {{variable}} 格式转换为 Python 的 {variable} 格式
+                # 使用正则表达式替换，支持带下划线的变量名
+                def replace_var(match):
+                    var_name = match.group(1)
+                    if var_name in context:
+                        return str(context[var_name])
+                    return match.group(0)  # 如果变量不存在，保留原样
+                
+                output_content = re.sub(r'\{\{([\w_]+)\}\}', replace_var, template)
+            except Exception as e:
+                output_content = f"[模板渲染错误: {str(e)}]\n原始模板: {template}"
+        # 否则使用选中的参数
+        elif output_param:
+            if output_param in state.custom_vars:
+                output_content = str(state.custom_vars[output_param])
+            elif hasattr(state, output_param):
+                output_content = str(getattr(state, output_param))
+            else:
+                output_content = f"[参数 {output_param} 未找到]"
+        else:
+            output_content = "[未配置输出参数或模板]"
+        
+        return {
+            "custom_vars": {
+                **state.custom_vars,
+                f"output_{self.config.get('id', 'unknown')}": output_content,
+            },
+            "node_output": output_content,
+        }
 
     def _call_llm_api(self, model_name: str, prompt: str, temperature: float) -> str:
         return f"[{model_name}] 大模型返回结果 (temperature={temperature})"
@@ -401,6 +479,8 @@ def build_langgraph_graph(graph_data: Dict[str, Any]) -> StateGraph:
             workflow.add_node(node_id, executor.rag_node)
         elif node_type == "condition":
             workflow.add_node(node_id, executor.condition_node)
+        elif node_type == "output":
+            workflow.add_node(node_id, executor.output_node)
         elif node_type == "end":
             workflow.add_node(node_id, lambda state: {"final_result": state.model_dump()})
         elif node_type == "start":
@@ -435,14 +515,38 @@ def build_langgraph_graph(graph_data: Dict[str, Any]) -> StateGraph:
 def execute_workflow(graph_data: Dict[str, Any], input_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     try:
         app = build_langgraph_graph(graph_data)
-        initial_state = WorkflowState(**(input_data or {}))
+        
+        # 准备初始状态
+        input_data = input_data or {}
+        
+        # 将非标准字段放入 custom_vars
+        custom_vars = input_data.get("custom_vars", {})
+        known_fields = {"user_input", "user_intent", "llm_output", "retrieved_result", "custom_vars"}
+        
+        for key, value in input_data.items():
+            if key not in known_fields:
+                # 动态变量（如 user_input_xxx, llm_output_xxx）放入 custom_vars
+                custom_vars[key] = value
+        
+        # 构建初始状态
+        state_data = {
+            "user_input": input_data.get("user_input", ""),
+            "user_intent": input_data.get("user_intent", ""),
+            "llm_output": input_data.get("llm_output", ""),
+            "retrieved_result": input_data.get("retrieved_result"),
+            "custom_vars": custom_vars,
+        }
+        
+        initial_state = WorkflowState(**state_data)
         result = app.invoke(initial_state.model_dump())
         return {
             "status": "success",
             "result": result
         }
     except Exception as e:
+        import traceback
         return {
             "status": "failed",
-            "error": str(e)
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }

@@ -108,23 +108,8 @@ const defaultParams: Param[] = [
     description: '包含所有对话内容的完整历史记录'
   },
   
-  // 输入节点输出
-  { 
-    id: 'user_input', 
-    label: '用户输入', 
-    type: 'string', 
-    source: '输入节点', 
-    description: '用户在输入节点中输入的内容'
-  },
-  
-  // 大模型节点输出
-  { 
-    id: 'llm_output', 
-    label: '大模型输出', 
-    type: 'string', 
-    source: '大模型节点', 
-    description: 'LLM节点的返回结果'
-  },
+  // 注意：输入节点和大模型节点的输出参数由 WorkflowEditor 动态创建，
+  // 不再使用固定参数，以支持区分多个同类型节点
   
   // 注意：代码节点的输出参数由用户自定义，不再预设 code_result
 ];

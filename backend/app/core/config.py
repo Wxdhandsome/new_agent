@@ -22,11 +22,11 @@ class Settings(BaseSettings):
     UPLOAD_DIR: Path = BASE_DIR / "uploads"
     
     # BGE Embedding 服务配置
-    BGE_URL: str = "http://localhost:50183"
+    BGE_URL: str = "http://1.194.201.134:50183"
     BGE_DENSE_DIM: int = 1024
     
     # Milvus 向量数据库配置
-    MILVUS_HOST: str = "localhost"
+    MILVUS_HOST: str = "192.168.99.151"
     MILVUS_PORT: str = "19530"
     MILVUS_COLLECTION: str = "workflow_kb_hybrid"
 

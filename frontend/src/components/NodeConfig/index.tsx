@@ -45,7 +45,12 @@ const InputNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ no
   const [form] = Form.useForm();
 
   useEffect(() => {
-    form.setFieldsValue(node.data);
+    // 初始化 varName（如果未设置）
+    const varName = `user_input_${node.id}`;
+    form.setFieldsValue({
+      ...node.data,
+      varName: node.data?.varName || varName,
+    });
   }, [node, form]);
 
   return (
@@ -57,10 +62,14 @@ const InputNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ no
       <Form.Item label="节点名称" name="label" rules={[{ required: true }]}>
         <Input placeholder="输入节点名称" />
       </Form.Item>
+      {/* 隐藏的 varName 字段，用于后端识别变量名 */}
+      <Form.Item name="varName" hidden>
+        <Input />
+      </Form.Item>
       <Form.Item>
         <div style={{ padding: '8px', background: '#f0f0f0', borderRadius: '4px', fontSize: '12px' }}>
-          <strong>参数名:</strong> user_input<br/>
-          <span style={{ color: '#666' }}>此节点的输出将自动保存到 user_input 变量</span>
+          <strong>参数名:</strong> user_input_{node.id}<br/>
+          <span style={{ color: '#666' }}>此节点的输出可通过变量 user_input_{node.id} 引用</span>
         </div>
       </Form.Item>
       <Form.Item label="输入提示" name="placeholder">
@@ -93,7 +102,12 @@ const LLMNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node
   const { params } = useParamPool();
 
   useEffect(() => {
-    form.setFieldsValue(node.data);
+    // 初始化 outputVar（如果未设置）
+    const outputVar = `llm_output_${node.id}`;
+    form.setFieldsValue({
+      ...node.data,
+      outputVar: node.data?.outputVar || outputVar,
+    });
   }, [node, form]);
 
   // 插入参数到Prompt模板
@@ -183,10 +197,15 @@ const LLMNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node
         />
       </Form.Item>
       
+      {/* 隐藏的 outputVar 字段，用于后端识别变量名 */}
+      <Form.Item name="outputVar" hidden>
+        <Input />
+      </Form.Item>
+      
       <Form.Item>
         <div style={{ padding: '8px', background: '#f0f0f0', borderRadius: '4px', fontSize: '12px' }}>
-          <strong>参数名:</strong> llm_output<br/>
-          <span style={{ color: '#666' }}>此节点的输出将自动保存到 llm_output 变量</span>
+          <strong>参数名:</strong> llm_output_{node.id}<br/>
+          <span style={{ color: '#666' }}>此节点的输出可通过变量 llm_output_{node.id} 引用</span>
         </div>
       </Form.Item>
     </Form>

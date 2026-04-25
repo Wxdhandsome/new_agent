@@ -65,7 +65,7 @@ def upsert_vectors(rows: list[dict]) -> None:
     client.flush(collection_name=settings.MILVUS_COLLECTION)
 
 
-def delete_vectors_for_kb(kb_id: str) -> None:
+def delete_vectors_for_kb(kb_id: str) -> bool:
     """删除某个知识库的所有向量。"""
     try:
         from pymilvus import connections, Collection
@@ -73,12 +73,17 @@ def delete_vectors_for_kb(kb_id: str) -> None:
         ensure_collection()
         coll = Collection(settings.MILVUS_COLLECTION)
         coll.load()
-        coll.delete(expr=f'kb_id == "{kb_id}"')
+        result = coll.delete(expr=f'kb_id == "{kb_id}"')
+        # 刷新集合以确保删除生效
+        coll.flush()
+        print(f"[INFO] 已删除知识库 {kb_id} 的 {result.delete_count if hasattr(result, 'delete_count') else '未知数量'} 条向量")
+        return True
     except Exception as exc:
-        print(f"[WARNING] 删除向量失败: {exc}")
+        print(f"[ERROR] 删除知识库向量失败 (kb_id={kb_id}): {exc}")
+        return False
 
 
-def delete_vectors_for_doc(kb_id: str, filename: str) -> None:
+def delete_vectors_for_doc(kb_id: str, filename: str) -> bool:
     """删除某个知识库下指定文件的所有向量。"""
     try:
         from pymilvus import connections, Collection
@@ -87,9 +92,14 @@ def delete_vectors_for_doc(kb_id: str, filename: str) -> None:
         coll = Collection(settings.MILVUS_COLLECTION)
         coll.load()
         safe_filename = (filename or "").replace('"', '\\"')
-        coll.delete(expr=f'kb_id == "{kb_id}" and source == "{safe_filename}"')
+        result = coll.delete(expr=f'kb_id == "{kb_id}" and source == "{safe_filename}"')
+        # 刷新集合以确保删除生效
+        coll.flush()
+        print(f"[INFO] 已删除文档 {filename} 的 {result.delete_count if hasattr(result, 'delete_count') else '未知数量'} 条向量")
+        return True
     except Exception as exc:
-        print(f"[WARNING] 删除向量失败: {exc}")
+        print(f"[ERROR] 删除文档向量失败 (kb_id={kb_id}, filename={filename}): {exc}")
+        return False
 
 
 def search_vectors(
