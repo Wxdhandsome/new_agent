@@ -668,7 +668,7 @@ const OutputNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ n
         </Select>
       </Form.Item>
       <Form.Item label="选择输出参数" name="outputParam">
-        <ParamSelect placeholder="选择要输出的参数" />
+        <ParamSelect placeholder="选择要输出的参数" style={{ width: '100%' }} />
       </Form.Item>
       <Form.Item label="输出模板" name="template">
         <TextArea rows={6} placeholder="输入输出模板，使用 {{变量名}} 引用上下文变量" />
@@ -859,8 +859,16 @@ const EndNodeConfig: FC<{ node: Node; onUpdate: (data: any) => void }> = ({ node
 const NodeConfigPanel: FC<NodeConfigPanelProps> = ({ selectedNode, onUpdateNode }) => {
   if (!selectedNode) {
     return (
-      <div style={{ padding: '20px', textAlign: 'center', color: '#999' }}>
-        <p>请选择一个节点进行配置</p>
+      <div style={{ padding: '32px 20px', textAlign: 'center' }}>
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>👆</div>
+        <h4 style={{ color: '#1f2937', marginBottom: '8px', fontWeight: 600 }}>点击画布上的任意节点</h4>
+        <p style={{ color: '#8c8c8c', fontSize: '14px', marginBottom: '24px' }}>在这里配置它的参数</p>
+        <div style={{ padding: '16px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', textAlign: 'left' }}>
+          <p style={{ margin: '0 0 8px 0', color: '#52c41a', fontWeight: 600, fontSize: '13px' }}>💡 快速上手</p>
+          <p style={{ margin: 0, color: '#4b5563', fontSize: '13px', lineHeight: '1.6' }}>
+            试试点击「大模型」节点，配置你的对话模型和提示词模板
+          </p>
+        </div>
       </div>
     );
   }

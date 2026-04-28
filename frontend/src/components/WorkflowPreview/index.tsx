@@ -1,13 +1,52 @@
 import { useState, useCallback, useRef, useEffect, type FC } from 'react';
-import { Modal, Button, Input, Card, Space, message } from 'antd';
-import { PlayCircleOutlined, SendOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
+import { Drawer, Button, Input, Card, Space, message, Progress, Badge, Typography, Divider } from 'antd';
+import {
+  PlayCircleOutlined,
+  SendOutlined,
+  UserOutlined,
+  RobotOutlined,
+  PauseOutlined,
+  StepForwardOutlined,
+  ReloadOutlined,
+  CloseOutlined,
+  CheckCircleOutlined,
+  ExclamationCircleOutlined,
+  ClockCircleOutlined,
+  CopyOutlined,
+} from '@ant-design/icons';
 import type { Node, Edge } from 'reactflow';
 import { workflowApi } from '../../api';
 
 const { TextArea } = Input;
+const { Text } = Typography;
 
 // API 基础 URL
 const API_BASE_URL = (import.meta as ImportMeta).env.VITE_BACKEND_URL || 'http://localhost:8001';
+
+// 节点执行状态
+export type NodeExecutionStatus = 'idle' | 'running' | 'success' | 'failed';
+
+// 执行日志
+interface ExecutionLog {
+  id: string;
+  nodeId: string;
+  nodeName: string;
+  nodeType: string;
+  status: NodeExecutionStatus;
+  message: string;
+  timestamp: number;
+  duration?: number;
+  error?: string;
+}
+
+// 节点执行数据
+interface NodeExecutionData {
+  input: Record<string, any>;
+  output: Record<string, any>;
+  duration: number;
+  status: NodeExecutionStatus;
+  error?: string;
+}
 
 interface WorkflowPreviewProps {
   visible: boolean;
@@ -15,6 +54,14 @@ interface WorkflowPreviewProps {
   nodes: Node[];
   edges: Edge[];
   workflowName: string;
+  // 运行模式相关
+  isRunningMode: boolean;
+  onRunningModeChange: (isRunning: boolean) => void;
+  // 节点状态回调
+  onNodeStatusChange?: (nodeId: string, status: NodeExecutionStatus) => void;
+  onNodeClick?: (nodeId: string) => void;
+  // 当前选中的节点（用于显示详情）
+  selectedNodeId?: string | null;
 }
 
 interface ChatMessage {
@@ -31,12 +78,33 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
   nodes,
   edges,
   workflowName,
+  isRunningMode,
+  onRunningModeChange,
+  onNodeStatusChange,
+  onNodeClick,
+  selectedNodeId,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null);
   const contextRef = useRef<Record<string, any>>({});
+
+  // 执行日志和进度
+  const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
+  const [executionData, setExecutionData] = useState<Record<string, NodeExecutionData>>({});
+  const [completedCount, setCompletedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // 调试模式
+  const [isDebugMode, setIsDebugMode] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const breakpointsRef = useRef<Set<string>>(new Set());
+  const pauseRef = useRef(false);
+  const stepNextRef = useRef(false);
+
+  // 用于强制刷新日志显示
+  const [, forceUpdate] = useState({});
 
   // 构建对话历史字符串
   const buildChatHistory = useCallback((msgs: ChatMessage[]): string => {
@@ -53,111 +121,94 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
   useEffect(() => {
     const chatHistory = buildChatHistory(messages);
     contextRef.current.chat_history = chatHistory;
-    console.log('[WorkflowPreview] chat_history updated:', chatHistory);
   }, [messages, buildChatHistory]);
 
-  // 使用 ref 跟踪 isRunning 状态，以便在异步操作中获取最新值
+  // 使用 ref 跟踪 isRunning 状态
   const isRunningRef = useRef(isRunning);
-  useEffect(() => {
-    isRunningRef.current = isRunning;
-  }, [isRunning]);
+  useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
 
   // 使用 ref 跟踪上一次的 visible 状态
   const prevVisibleRef = useRef(false);
-
-  // 使用 ref 跟踪组件是否挂载
   const isMountedRef = useRef(true);
 
   useEffect(() => {
     isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
+    return () => { isMountedRef.current = false; };
   }, []);
 
-  // 当弹窗打开时，重置状态
+  // 同步暂停状态到 ref
+  useEffect(() => { pauseRef.current = isPaused; }, [isPaused]);
+
+  // 当 Drawer 打开时，重置状态
   useEffect(() => {
-    // 只在从关闭到打开时重置状态，避免 nodes/edges 变化时重置
     if (visible && !prevVisibleRef.current) {
       setMessages([]);
       setInputValue('');
       setIsRunning(false);
       setCurrentNodeId(null);
+      setExecutionLogs([]);
+      setExecutionData({});
+      setCompletedCount(0);
+      setTotalCount(0);
+      setIsPaused(false);
+      setIsDebugMode(false);
+      pauseRef.current = false;
+      stepNextRef.current = false;
       contextRef.current = {};
-      console.log('[WorkflowPreview] Opened with', nodes.length, 'nodes and', edges.length, 'edges');
     }
     prevVisibleRef.current = visible;
   }, [visible]);
 
-  const getStartNode = useCallback((): Node | undefined => {
-    const startNode = nodes.find(n => n.type === 'start');
-    console.log('[WorkflowPreview] Nodes:', nodes.length, 'Start node:', startNode?.id);
-    return startNode;
+  // 计算可执行节点总数（排除 start 和 end）
+  const getExecutableNodeCount = useCallback(() => {
+    return nodes.filter(n => n.type !== 'start' && n.type !== 'end').length;
   }, [nodes]);
 
-  // 获取普通节点的下一个节点（单出口）
+  const getStartNode = useCallback((): Node | undefined => {
+    return nodes.find(n => n.type === 'start');
+  }, [nodes]);
+
   const getNextNode = useCallback((currentId: string): Node | null => {
     const edge = edges.find(e => e.source === currentId);
     if (!edge) return null;
     return nodes.find(n => n.id === edge.target) || null;
   }, [edges, nodes]);
 
-  // 获取条件分支的下一个节点（根据条件索引或默认分支）
   const getConditionNextNode = useCallback((conditionNodeId: string, conditionIndex: number): Node | null => {
-    // conditionIndex: 0-n 表示第几个条件，-1 表示默认分支
     let edge;
     if (conditionIndex === -1) {
-      // 查找默认分支（sourceHandle 为 'default'）
       edge = edges.find(e => e.source === conditionNodeId && e.sourceHandle === 'default');
     } else {
-      // 查找对应条件的分支
       const handleId = `cond_${conditionIndex}`;
       edge = edges.find(e => e.source === conditionNodeId && e.sourceHandle === handleId);
     }
-
-    // 如果没找到特定 handle 的边，尝试查找没有 sourceHandle 的边（兼容旧数据）
     if (!edge) {
       const allEdges = edges.filter(e => e.source === conditionNodeId);
       if (conditionIndex === -1 && allEdges.length > 0) {
-        // 默认分支使用最后一条边
         edge = allEdges[allEdges.length - 1];
       } else if (conditionIndex >= 0 && allEdges[conditionIndex]) {
         edge = allEdges[conditionIndex];
       }
     }
-
     if (!edge) return null;
     return nodes.find(n => n.id === edge?.target) || null;
   }, [edges, nodes]);
 
-  // 评估条件表达式
   const evaluateCondition = useCallback((condition: any, context: Record<string, any>): boolean => {
     const varValue = context[condition.variable];
     const targetValue = condition.value;
-
     switch (condition.operator) {
-      case 'equals': 
-        return String(varValue) === String(targetValue);
-      case 'notEquals': 
-        return String(varValue) !== String(targetValue);
-      case 'contains': 
-        return String(varValue).includes(targetValue);
-      case 'notContains': 
-        return !String(varValue).includes(targetValue);
-      case 'startsWith': 
-        return String(varValue).startsWith(targetValue);
-      case 'endsWith': 
-        return String(varValue).endsWith(targetValue);
-      case 'greaterThan': 
-        return Number(varValue) > Number(targetValue);
-      case 'lessThan': 
-        return Number(varValue) < Number(targetValue);
-      case 'greaterThanOrEqual': 
-        return Number(varValue) >= Number(targetValue);
-      case 'lessThanOrEqual': 
-        return Number(varValue) <= Number(targetValue);
-      default:
-        return false;
+      case 'equals': return String(varValue) === String(targetValue);
+      case 'notEquals': return String(varValue) !== String(targetValue);
+      case 'contains': return String(varValue).includes(targetValue);
+      case 'notContains': return !String(varValue).includes(targetValue);
+      case 'startsWith': return String(varValue).startsWith(targetValue);
+      case 'endsWith': return String(varValue).endsWith(targetValue);
+      case 'greaterThan': return Number(varValue) > Number(targetValue);
+      case 'lessThan': return Number(varValue) < Number(targetValue);
+      case 'greaterThanOrEqual': return Number(varValue) >= Number(targetValue);
+      case 'lessThanOrEqual': return Number(varValue) <= Number(targetValue);
+      default: return false;
     }
   }, []);
 
@@ -176,21 +227,81 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, ...updates } : m));
   }, []);
 
-  // 执行单个节点，返回下一个节点
+  // 添加执行日志
+  const addExecutionLog = useCallback((nodeId: string, nodeName: string, nodeType: string, status: NodeExecutionStatus, message: string, duration?: number, error?: string) => {
+    const log: ExecutionLog = {
+      id: `log_${Date.now()}_${Math.random()}`,
+      nodeId,
+      nodeName,
+      nodeType,
+      status,
+      message,
+      timestamp: Date.now(),
+      duration,
+      error,
+    };
+    setExecutionLogs(prev => [...prev, log]);
+    forceUpdate({});
+  }, []);
+
+  // 更新节点执行数据
+  const updateNodeExecutionData = useCallback((nodeId: string, data: Partial<NodeExecutionData>) => {
+    setExecutionData(prev => ({
+      ...prev,
+      [nodeId]: { ...prev[nodeId], ...data } as NodeExecutionData,
+    }));
+  }, []);
+
+  // 等待暂停恢复
+  const waitForResume = useCallback(async (): Promise<void> => {
+    if (!pauseRef.current && !stepNextRef.current) return;
+    return new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (!pauseRef.current || stepNextRef.current) {
+          clearInterval(check);
+          stepNextRef.current = false;
+          resolve();
+        }
+      }, 100);
+    });
+  }, []);
+
+  // 执行单个节点
   const executeNode = useCallback(async (currentNode: Node): Promise<Node | null> => {
+    const nodeStartTime = Date.now();
+
+    // 检查断点
+    if (breakpointsRef.current.has(currentNode.id) && isDebugMode) {
+      setIsPaused(true);
+      pauseRef.current = true;
+      addExecutionLog(currentNode.id, currentNode.data?.label || currentNode.type || '未知', currentNode.type || 'unknown', 'running', '遇到断点，暂停执行');
+      await waitForResume();
+    }
+
+    // 更新节点状态为运行中
+    onNodeStatusChange?.(currentNode.id, 'running');
+    setCurrentNodeId(currentNode.id);
+
+    // 记录输入数据
+    const nodeInput = { ...contextRef.current };
+    updateNodeExecutionData(currentNode.id, { input: nodeInput, status: 'running' });
+
     switch (currentNode.type) {
       case 'input': {
-        // 输入节点暂停执行，等待用户输入
-        setCurrentNodeId(currentNode.id);
         setIsRunning(false);
+        onRunningModeChange(false);
+        onNodeStatusChange?.(currentNode.id, 'success');
+        updateNodeExecutionData(currentNode.id, {
+          output: { user_input: contextRef.current.user_input },
+          status: 'success',
+          duration: Date.now() - nodeStartTime,
+        });
+        addExecutionLog(currentNode.id, currentNode.data?.label || '输入', 'input', 'success', '等待用户输入');
         return null;
       }
 
       case 'llm': {
-        // 获取LLM节点配置
         const showOutput = currentNode.data?.showOutput !== false;
-        
-        // 只有当 showOutput 为 true 时才添加消息到对话界面
         let loadingMsgId: string | null = null;
         if (showOutput) {
           loadingMsgId = addMessage('assistant', '', {
@@ -205,93 +316,53 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
           const userInput = contextRef.current.user_input || '';
           const model = currentNode.data?.model || 'Qwen3-32B-FP8';
           const temperature = currentNode.data?.temperature || 0.7;
-          
-          console.log('[LLM Node] promptTemplate:', promptTemplate);
-          console.log('[LLM Node] systemPrompt:', systemPrompt);
-          console.log('[LLM Node] userInput:', userInput);
-          console.log('[LLM Node] showOutput:', showOutput);
-          console.log('[LLM Node] contextRef:', contextRef.current);
-          
-          // 构建消息列表
+
           const chatMessages: Array<{role: string; content: string}> = [];
-          if (systemPrompt) {
-            chatMessages.push({ role: 'system', content: systemPrompt });
-          }
-          
-          // 替换模板中的变量（支持带下划线的变量名）
+          if (systemPrompt) chatMessages.push({ role: 'system', content: systemPrompt });
+
           const formattedPrompt = promptTemplate.replace(/\{\{([\w_]+)\}\}/g, (match: string, key: string) => {
             const value = contextRef.current[key];
-            if (value !== undefined && value !== null) {
-              console.log(`[LLM Node] Replacing {{${key}}} with:`, value);
-              return String(value);
-            }
-            console.log(`[LLM Node] Variable {{${key}}} not found, keeping original`);
-            return match;
+            return value !== undefined && value !== null ? String(value) : match;
           });
-          
-          console.log('[LLM Node] formattedPrompt:', formattedPrompt);
-          
-          // 如果 formattedPrompt 为空或只包含空白字符，使用 userInput
+
           const finalContent = formattedPrompt?.trim() ? formattedPrompt : userInput;
-          console.log('[LLM Node] final user content:', finalContent);
-          
           chatMessages.push({ role: 'user', content: finalContent });
-          
-          console.log('[LLM Node] chatMessages:', chatMessages);
-          
+
           const enableThinking = currentNode.data?.enableThinking !== false;
-          
-          // 使用流式API实时显示输出
+
           let fullContent = '';
           let isStreamDone = false;
-          
-          // 初始化流式内容引用，供输出节点使用
+
           contextRef.current._llm_streaming_content = '';
           contextRef.current._llm_streaming_done = false;
           contextRef.current._llm_streaming_loading = true;
-          
+
           const stream = workflowApi.chatStream(
             chatMessages,
             (chunk) => {
-              console.log('[LLM Node] Received chunk:', chunk);
               if (chunk.error) {
                 isStreamDone = true;
                 contextRef.current.llm_output = fullContent;
-                // 更新流式内容引用
                 contextRef.current._llm_streaming_content = fullContent;
                 contextRef.current._llm_streaming_done = true;
                 contextRef.current._llm_streaming_loading = false;
-                // 只有在 showOutput 为 true 时才更新消息
                 if (showOutput && loadingMsgId) {
-                  updateMessage(loadingMsgId, {
-                    content: chunk.content,
-                    isLoading: false,
-                  });
+                  updateMessage(loadingMsgId, { content: chunk.content, isLoading: false });
                 }
               } else if (chunk.done) {
                 isStreamDone = true;
                 contextRef.current.llm_output = fullContent;
-                // 更新流式内容引用
                 contextRef.current._llm_streaming_content = fullContent;
                 contextRef.current._llm_streaming_done = true;
                 contextRef.current._llm_streaming_loading = false;
-                // 只有在 showOutput 为 true 时才更新消息
                 if (showOutput && loadingMsgId) {
-                  updateMessage(loadingMsgId, {
-                    content: fullContent,
-                    isLoading: false,
-                  });
+                  updateMessage(loadingMsgId, { content: fullContent, isLoading: false });
                 }
               } else {
                 fullContent += chunk.content;
-                // 实时更新流式内容引用
                 contextRef.current._llm_streaming_content = fullContent;
-                // 只有在 showOutput 为 true 时才更新消息
                 if (showOutput && loadingMsgId) {
-                  updateMessage(loadingMsgId, {
-                    content: fullContent,
-                    isLoading: true,
-                  });
+                  updateMessage(loadingMsgId, { content: fullContent, isLoading: true });
                 }
               }
             },
@@ -300,27 +371,33 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
             enableThinking
           );
 
-          // 等待流式响应完成
           await new Promise<void>((resolve) => {
             const checkDone = setInterval(() => {
-              if (isStreamDone) {
-                clearInterval(checkDone);
-                resolve();
-              }
+              if (isStreamDone) { clearInterval(checkDone); resolve(); }
             }, 100);
-            
-            // 超时处理（60秒）
-            setTimeout(() => {
-              clearInterval(checkDone);
-              stream.abort();
-              resolve();
-            }, 60000);
+            setTimeout(() => { clearInterval(checkDone); stream.abort(); resolve(); }, 60000);
           });
+
+          const duration = Date.now() - nodeStartTime;
+          onNodeStatusChange?.(currentNode.id, 'success');
+          updateNodeExecutionData(currentNode.id, {
+            output: { llm_output: fullContent },
+            status: 'success',
+            duration,
+          });
+          addExecutionLog(currentNode.id, currentNode.data?.label || '大模型', 'llm', 'success', `生成完成 (${fullContent.length} 字符)`, duration);
+          setCompletedCount(prev => prev + 1);
         } catch (error: any) {
-          // 更新流式内容引用为错误状态
           contextRef.current._llm_streaming_done = true;
           contextRef.current._llm_streaming_loading = false;
-          // 只有在 showOutput 为 true 时才更新消息
+          const duration = Date.now() - nodeStartTime;
+          onNodeStatusChange?.(currentNode.id, 'failed');
+          updateNodeExecutionData(currentNode.id, {
+            status: 'failed',
+            duration,
+            error: error.message,
+          });
+          addExecutionLog(currentNode.id, currentNode.data?.label || '大模型', 'llm', 'failed', `调用失败: ${error.message}`, duration, error.message);
           if (showOutput && loadingMsgId) {
             updateMessage(loadingMsgId, {
               content: `调用模型失败：${error.message || '未知错误'}`,
@@ -332,7 +409,6 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
       }
 
       case 'rag': {
-        // RAG 知识库检索节点
         const showOutput = currentNode.data?.showOutput !== false;
         const kbId = currentNode.data?.kbId;
         const userQuestionVar = currentNode.data?.userQuestionVar || 'user_input';
@@ -347,19 +423,10 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
         }
 
         try {
-          // 获取用户问题（从上下文变量中取）
           const userQuestion = contextRef.current[userQuestionVar] || contextRef.current.user_input || '';
-          
-          if (!kbId) {
-            throw new Error('未配置检索知识库');
-          }
-          if (!userQuestion.trim()) {
-            throw new Error('用户问题为空，无法执行检索');
-          }
+          if (!kbId) throw new Error('未配置检索知识库');
+          if (!userQuestion.trim()) throw new Error('用户问题为空，无法执行检索');
 
-          console.log('[RAG Node] Executing recall search:', { kbId, userQuestion, outputVar });
-
-          // 调用后端 RAG 检索接口
           const recallResult: any = await new Promise((resolve, reject) => {
             fetch(`${API_BASE_URL}/api/kb/${kbId}/recall`, {
               method: 'POST',
@@ -377,24 +444,17 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
               }),
             })
               .then(res => res.json())
-              .then(data => {
-                if (data.detail) reject(new Error(data.detail));
-                else resolve(data);
-              })
+              .then(data => { if (data.detail) reject(new Error(data.detail)); else resolve(data); })
               .catch(reject);
           });
 
-          // 提取纯文字内容（只保留 content，用于后续节点）
           const items = recallResult.items || [];
           const retrievedText = items
             .map((item: any) => item.content?.trim())
             .filter(Boolean)
             .join('\n\n');
-          
-          // 保存纯文字内容到输出变量
+
           contextRef.current[outputVar] = retrievedText;
-          
-          // 同时保存结构化结果供调试使用
           contextRef.current._rag_raw = {
             query: userQuestion,
             kb_id: kbId,
@@ -403,9 +463,16 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
             avg_similarity: recallResult.avg_similarity,
           };
 
-          console.log('[RAG Node] Retrieved text length:', retrievedText.length);
+          const duration = Date.now() - nodeStartTime;
+          onNodeStatusChange?.(currentNode.id, 'success');
+          updateNodeExecutionData(currentNode.id, {
+            output: { [outputVar]: retrievedText, items_count: items.length },
+            status: 'success',
+            duration,
+          });
+          addExecutionLog(currentNode.id, currentNode.data?.label || '知识库检索', 'rag', 'success', `检索到 ${items.length} 条结果`, duration);
+          setCompletedCount(prev => prev + 1);
 
-          // 显示结果
           if (showOutput && loadingMsgId) {
             const sources = [...new Set(items.map((item: any) => item.source).filter(Boolean))];
             const outputContent = [
@@ -413,25 +480,23 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
               ``,
               retrievedText.slice(0, 2000) + (retrievedText.length > 2000 ? '\n\n...(内容已截断)' : '')
             ].join('\n');
-            
-            updateMessage(loadingMsgId, {
-              content: outputContent,
-              isLoading: false,
-            });
+            updateMessage(loadingMsgId, { content: outputContent, isLoading: false });
           }
         } catch (error: any) {
-          console.error('[RAG Node] Error:', error);
+          const duration = Date.now() - nodeStartTime;
           contextRef.current[outputVar] = '';
           contextRef.current._rag_raw = { error: error.message };
-          
+          onNodeStatusChange?.(currentNode.id, 'failed');
+          updateNodeExecutionData(currentNode.id, {
+            status: 'failed',
+            duration,
+            error: error.message,
+          });
+          addExecutionLog(currentNode.id, currentNode.data?.label || '知识库检索', 'rag', 'failed', `检索失败: ${error.message}`, duration, error.message);
           if (showOutput && loadingMsgId) {
-            updateMessage(loadingMsgId, {
-              content: `【知识库检索】检索失败：${error.message}`,
-              isLoading: false,
-            });
+            updateMessage(loadingMsgId, { content: `【知识库检索】检索失败：${error.message}`, isLoading: false });
           }
         }
-        
         return getNextNode(currentNode.id);
       }
 
@@ -441,7 +506,7 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
         const inputVars = currentNode.data?.inputVars || [];
         const outputVars = currentNode.data?.outputVars || [];
         const language = currentNode.data?.language || 'python';
-        
+
         let loadingMsgId: string | null = null;
         if (showOutput) {
           loadingMsgId = addMessage('assistant', '执行代码中...', {
@@ -451,188 +516,129 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
         }
 
         try {
-          // 构建输入参数
           const execParams: Record<string, any> = {};
           inputVars.forEach((varConfig: any) => {
             const varName = varConfig.customName || varConfig.name;
             const sourceType = varConfig.sourceType || '输入';
-
             if (!varName) return;
-
             if (sourceType === '引用') {
-              // 从上下文引用变量
               const refParamId = varConfig.referencedParamId;
               execParams[varName] = refParamId ? contextRef.current[refParamId] : undefined;
             } else {
-              // 普通输入优先使用同名上下文值，否则回退 user_input
               execParams[varName] = contextRef.current[varName] ?? contextRef.current.user_input ?? '';
             }
           });
 
-          console.log('[Code Node] Executing code with params:', execParams);
-          console.log('[Code Node] Code content:', codeContent);
-          console.log('[Code Node] Language:', language);
-
-          // 执行代码
           let codeResult: any;
-
-          // 记录代码节点主输出（用于 output 节点兜底展示）
           const primaryOutputName = outputVars?.[0]?.name;
-          
-          // 检测代码类型：Python 或 JavaScript
           const isPythonCode = language === 'python' || codeContent.includes('def main(');
-          
+
           if (isPythonCode) {
-            // Python 代码：调用后端 API 执行
             try {
-              console.log('[Code Node] Calling backend API to execute Python code...');
               const executeResponse = await workflowApi.executeCode({
                 code: codeContent,
                 language: 'python',
-                inputVars: inputVars,
-                outputVars: outputVars,
-                params: {
-                  ...execParams,
-                  user_input: contextRef.current.user_input || '',
-                },
+                inputVars,
+                outputVars,
+                params: { ...execParams, user_input: contextRef.current.user_input || '' },
               });
-              
-              console.log('[Code Node] Backend execution response:', executeResponse);
-              
               if (executeResponse.status === 'success') {
                 codeResult = executeResponse.result;
               } else {
                 codeResult = { error: executeResponse.error || '执行失败' };
               }
             } catch (apiError: any) {
-              console.error('[Code Node] Backend API error:', apiError);
-              // 区分不同类型的错误
               if (apiError.code === 'ECONNABORTED' || apiError.message?.includes('timeout')) {
-                codeResult = { 
-                  error: '代码执行超时',
-                  hint: '代码执行时间超过 30 秒，请优化代码或简化逻辑'
-                };
-              } else if (apiError.message?.includes('Network Error') || apiError.response?.status === 0) {
-                codeResult = { 
-                  error: '无法连接到后端服务',
-                  hint: '请确保后端服务已启动 (localhost:8000) 并检查网络连接'
-                };
+                codeResult = { error: '代码执行超时', hint: '代码执行时间超过 30 秒' };
+              } else if (apiError.message?.includes('Network Error')) {
+                codeResult = { error: '无法连接到后端服务', hint: '请确保后端服务已启动' };
               } else {
-                codeResult = { 
-                  error: `后端执行失败: ${apiError.message || '未知错误'}`,
-                  hint: apiError.response?.data?.error || '请检查后端日志获取详细信息'
-                };
+                codeResult = { error: `后端执行失败: ${apiError.message}`, hint: apiError.response?.data?.error };
               }
             }
           } else {
-            // JavaScript 代码：在前端直接执行
             const isJSFunction = codeContent.includes('function') || codeContent.includes('=>');
-            
             if (codeContent.includes('main') || isJSFunction) {
-              // JavaScript 函数模式
               try {
-                // 提取参数名
                 const paramNames = inputVars.map((v: any) => v.customName || v.name);
-                
-                // 创建安全的执行环境
-                // 将代码包装在 IIFE 中，确保函数定义在执行之前
-                const wrappedCode = `
-                  (function(${paramNames.join(', ')}) {
-                    ${codeContent}
-                    if (typeof main === 'function') {
-                      return main(${paramNames.join(', ')});
-                    }
-                    return undefined;
-                  })
-                `;
-                
-                // 编译函数
+                const wrappedCode = `(function(${paramNames.join(', ')}) { ${codeContent}; if (typeof main === 'function') { return main(${paramNames.join(', ')}); } return undefined; })`;
                 const compiledFn = eval(wrappedCode);
-                
-                // 获取参数值并执行
                 const paramValues = paramNames.map((name: string) => execParams[name]);
                 codeResult = compiledFn(...paramValues);
-                
-                console.log('[Code Node] JS Execution result:', codeResult);
               } catch (execError: any) {
-                console.error('[Code Node] JS Execution error:', execError);
                 codeResult = { error: `代码执行错误: ${execError.message}` };
               }
             } else {
-              // 表达式模式：直接执行代码
               try {
-                // 简单的代码执行（仅支持表达式）
                 const fn = new Function('context', `return (${codeContent})`);
                 codeResult = fn(execParams);
-                console.log('[Code Node] Expression result:', codeResult);
               } catch (exprError: any) {
-                console.error('[Code Node] Expression error:', exprError);
                 codeResult = { error: `表达式执行错误: ${exprError.message}` };
               }
             }
           }
 
-          // 将每个输出变量保存到上下文（直接使用用户定义的输出参数）
           if (outputVars.length > 0) {
             outputVars.forEach((outputVar: any) => {
               const varName = outputVar.name;
               if (!varName) return;
-
               if (codeResult && typeof codeResult === 'object' && Object.prototype.hasOwnProperty.call(codeResult, varName)) {
                 contextRef.current[varName] = codeResult[varName];
               } else if (outputVars.length === 1) {
-                // 如果只有一个输出变量，将整个结果赋值给它
                 contextRef.current[varName] = codeResult;
               }
             });
           }
-
-          // 保留一个统一兜底值，供输出节点在未指定 outputParam 时使用
           if (primaryOutputName) {
             contextRef.current.code_output = contextRef.current[primaryOutputName];
           }
 
-          console.log('[Code Node] Context updated:', contextRef.current);
+          const duration = Date.now() - nodeStartTime;
+          const hasError = codeResult && typeof codeResult === 'object' && codeResult.error;
+          onNodeStatusChange?.(currentNode.id, hasError ? 'failed' : 'success');
+          updateNodeExecutionData(currentNode.id, {
+            output: typeof codeResult === 'object' ? codeResult : { result: codeResult },
+            status: hasError ? 'failed' : 'success',
+            duration,
+            error: hasError ? codeResult.error : undefined,
+          });
+          addExecutionLog(currentNode.id, currentNode.data?.label || '代码', 'code', hasError ? 'failed' : 'success', hasError ? `执行失败: ${codeResult.error}` : '执行成功', duration, hasError ? codeResult.error : undefined);
+          setCompletedCount(prev => prev + 1);
 
-          // 只有在 showOutput 为 true 时才显示消息
           if (showOutput && loadingMsgId) {
-            const outputStr = typeof codeResult === 'object' 
-              ? JSON.stringify(codeResult, null, 2)
-              : String(codeResult);
-            
-            updateMessage(loadingMsgId, {
-              content: outputStr,
-              isLoading: false,
-            });
+            const outputStr = typeof codeResult === 'object' ? JSON.stringify(codeResult, null, 2) : String(codeResult);
+            updateMessage(loadingMsgId, { content: outputStr, isLoading: false });
           }
         } catch (error: any) {
-          console.error('[Code Node] Error:', error);
-          
+          const duration = Date.now() - nodeStartTime;
+          onNodeStatusChange?.(currentNode.id, 'failed');
+          updateNodeExecutionData(currentNode.id, { status: 'failed', duration, error: error.message });
+          addExecutionLog(currentNode.id, currentNode.data?.label || '代码', 'code', 'failed', `执行失败: ${error.message}`, duration, error.message);
           if (showOutput && loadingMsgId) {
-            updateMessage(loadingMsgId, {
-              content: `代码执行失败：${error.message}`,
-              isLoading: false,
-            });
+            updateMessage(loadingMsgId, { content: `代码执行失败：${error.message}`, isLoading: false });
           }
         }
-        
         return getNextNode(currentNode.id);
       }
 
       case 'condition': {
         const conditions = currentNode.data?.conditions || [];
-        let matchedIndex = -1; // -1 表示默认分支
-
-        // 按顺序评估每个条件
+        let matchedIndex = -1;
         for (let i = 0; i < conditions.length; i++) {
-          const condition = conditions[i];
-          if (evaluateCondition(condition, contextRef.current)) {
+          if (evaluateCondition(conditions[i], contextRef.current)) {
             matchedIndex = i;
             break;
           }
         }
-        
-        // 条件分支不显示消息，直接跳转到对应分支
+        const duration = Date.now() - nodeStartTime;
+        onNodeStatusChange?.(currentNode.id, 'success');
+        updateNodeExecutionData(currentNode.id, {
+          output: { matched_condition: matchedIndex },
+          status: 'success',
+          duration,
+        });
+        addExecutionLog(currentNode.id, currentNode.data?.label || '条件分支', 'condition', 'success', `匹配条件 ${matchedIndex >= 0 ? matchedIndex + 1 : '默认分支'}`, duration);
+        setCompletedCount(prev => prev + 1);
         return getConditionNextNode(currentNode.id, matchedIndex);
       }
 
@@ -645,13 +651,10 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
           return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
         };
 
-        // 获取最终输出内容（严格语义：不做隐式解引用）
         let finalOutput = '';
         if (template) {
-          // 使用 [\w_]+ 匹配变量名（支持字母、数字、下划线）
           finalOutput = template.replace(/\{\{([\w_]+)\}\}/g, (_match: string, key: string) => {
             const value = contextRef.current[key];
-            console.log(`[Output Node] Replacing {{${key}}} with:`, value);
             return stringifyValue(value);
           });
         } else if (outputParam) {
@@ -660,181 +663,383 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
           finalOutput = stringifyValue(contextRef.current.code_output);
         }
 
-        if (!finalOutput.trim()) {
-          return getNextNode(currentNode.id);
-        }
-        
-        // 创建消息并流式显示
+        const duration = Date.now() - nodeStartTime;
+        onNodeStatusChange?.(currentNode.id, 'success');
+        updateNodeExecutionData(currentNode.id, {
+          output: { final_output: finalOutput },
+          status: 'success',
+          duration,
+        });
+        addExecutionLog(currentNode.id, currentNode.data?.label || '输出', 'output', 'success', `输出 ${finalOutput.length} 字符`, duration);
+        setCompletedCount(prev => prev + 1);
+
+        if (!finalOutput.trim()) return getNextNode(currentNode.id);
+
         const msgId = addMessage('assistant', '', {
           nodeName: currentNode.data?.label || '输出',
           isLoading: true,
         });
-        
-        // 模拟流式输出效果
+
         await new Promise<void>((resolve) => {
           let currentIndex = 0;
-          const chunkSize = 2; // 每次显示2个字符
-          const interval = 30; // 每30ms更新一次
-          
+          const chunkSize = 2;
+          const interval = 30;
           const streamInterval = setInterval(() => {
             if (currentIndex >= finalOutput.length) {
               clearInterval(streamInterval);
-              updateMessage(msgId, {
-                content: finalOutput,
-                isLoading: false,
-              });
+              updateMessage(msgId, { content: finalOutput, isLoading: false });
               resolve();
               return;
             }
-            
             currentIndex += chunkSize;
             const currentContent = finalOutput.slice(0, currentIndex);
-            
-            updateMessage(msgId, {
-              content: currentContent,
-              isLoading: true,
-            });
+            updateMessage(msgId, { content: currentContent, isLoading: true });
           }, interval);
         });
-        
+
         return getNextNode(currentNode.id);
       }
 
       case 'end': {
         addMessage('system', '对话结束');
-        // 设置 currentNodeId 为 null，表示正常结束
-        // 这样 startExecution 中的逻辑可以区分是 input 暂停还是正常结束
         setCurrentNodeId(null);
+        const duration = Date.now() - nodeStartTime;
+        onNodeStatusChange?.(currentNode.id, 'success');
+        updateNodeExecutionData(currentNode.id, { output: {}, status: 'success', duration });
+        addExecutionLog(currentNode.id, '结束', 'end', 'success', '流程结束', duration);
+        setCompletedCount(prev => prev + 1);
         return null;
       }
 
       default:
         return getNextNode(currentNode.id);
     }
-  }, [addMessage, updateMessage, getNextNode, getConditionNextNode, evaluateCondition]);
+  }, [addMessage, updateMessage, getNextNode, getConditionNextNode, evaluateCondition, onNodeStatusChange, updateNodeExecutionData, addExecutionLog, isDebugMode, waitForResume, nodes]);
 
   const startExecution = useCallback(async () => {
-    console.log('[WorkflowPreview] startExecution called');
     setMessages([]);
     setIsRunning(true);
+    onRunningModeChange(true);
     contextRef.current = {};
+    setExecutionLogs([]);
+    setExecutionData({});
+    setCompletedCount(0);
+    setTotalCount(getExecutableNodeCount());
 
     const startNode = getStartNode();
-    console.log('[WorkflowPreview] Start node:', startNode);
     if (!startNode) {
       if (isMountedRef.current) {
-        addMessage('system', '错误：没有找到开始节点，请确保工作流中包含开始节点');
+        addMessage('system', '错误：没有找到开始节点');
         setIsRunning(false);
+        onRunningModeChange(false);
         setCurrentNodeId(null);
       }
       return;
     }
 
-    // 检查开始节点是否有连接的边
     const firstEdge = edges.find(e => e.source === startNode.id);
     if (!firstEdge) {
       if (isMountedRef.current) {
-        addMessage('system', '错误：开始节点没有连接到其他节点，请添加节点并连接');
+        addMessage('system', '错误：开始节点没有连接到其他节点');
         setIsRunning(false);
+        onRunningModeChange(false);
         setCurrentNodeId(null);
       }
       return;
     }
 
     let currentNode: Node | null = getNextNode(startNode.id);
-
-    // 如果没有后续节点
     if (!currentNode) {
       if (isMountedRef.current) {
-        addMessage('system', '错误：工作流中没有可执行的节点，请添加更多节点');
+        addMessage('system', '错误：工作流中没有可执行的节点');
         setIsRunning(false);
+        onRunningModeChange(false);
         setCurrentNodeId(null);
       }
       return;
     }
 
     while (currentNode && isMountedRef.current) {
+      // 检查是否暂停
+      if (pauseRef.current) {
+        await waitForResume();
+      }
+
       setCurrentNodeId(currentNode.id);
       currentNode = await executeNode(currentNode);
     }
 
-    // 注意：如果执行被 input 节点暂停，currentNode 会是 null，但 currentNodeId 不为 null
-    // 这时候不应该重置 currentNodeId，因为需要等待用户输入
     if (isMountedRef.current && currentNodeId === null) {
       setIsRunning(false);
+      onRunningModeChange(false);
+      message.success(`执行完成，耗时 ${((Date.now() - (executionLogs[0]?.timestamp || Date.now())) / 1000).toFixed(1)}s`);
     }
-  }, [getStartNode, getNextNode, addMessage, executeNode, edges]);
+  }, [getStartNode, getNextNode, addMessage, executeNode, edges, onRunningModeChange, getExecutableNodeCount, executionLogs, currentNodeId, waitForResume]);
 
   const handleUserInput = useCallback(async () => {
-    if (!inputValue.trim()) {
-      message.warning('请输入内容');
-      return;
-    }
+    if (!inputValue.trim()) { message.warning('请输入内容'); return; }
 
-    // 1. 先显示用户输入
     addMessage('user', inputValue);
-    
-    // 2. 保存用户输入到通用变量和当前输入节点的专用变量
     contextRef.current.user_input = inputValue;
-    
-    // 获取当前输入节点的变量名并保存值
+
     if (currentNodeId) {
       const currentNode = nodes.find(n => n.id === currentNodeId);
       if (currentNode && currentNode.type === 'input') {
         const varName = currentNode.data?.varName || `user_input_${currentNodeId}`;
         contextRef.current[varName] = inputValue;
-        console.log(`[handleUserInput] Saved to ${varName}:`, inputValue);
       }
     }
-    
-    console.log('[handleUserInput] contextRef:', contextRef.current);
+
     setInputValue('');
     setIsRunning(true);
+    onRunningModeChange(true);
 
-    // 3. 继续执行后续节点
     if (currentNodeId) {
       let nextNode = getNextNode(currentNodeId);
-
       while (nextNode && isMountedRef.current) {
+        if (pauseRef.current) await waitForResume();
         setCurrentNodeId(nextNode.id);
         nextNode = await executeNode(nextNode);
       }
     }
 
-    // 注意：如果执行被 input 节点暂停，currentNodeId 不为 null
-    // 这时候不应该重置 currentNodeId，因为需要等待用户输入
     if (isMountedRef.current && currentNodeId === null) {
       setIsRunning(false);
+      onRunningModeChange(false);
     }
-  }, [inputValue, currentNodeId, getNextNode, addMessage, executeNode, nodes]);
+  }, [inputValue, currentNodeId, getNextNode, addMessage, executeNode, nodes, onRunningModeChange, waitForResume]);
+
+  // 调试控制
+  const handlePauseResume = useCallback(() => {
+    setIsPaused(prev => {
+      const next = !prev;
+      pauseRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const handleStepNext = useCallback(() => {
+    stepNextRef.current = true;
+    setIsPaused(false);
+    pauseRef.current = false;
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setMessages([]);
+    setIsRunning(false);
+    onRunningModeChange(false);
+    setCurrentNodeId(null);
+    setExecutionLogs([]);
+    setExecutionData({});
+    setCompletedCount(0);
+    setIsPaused(false);
+    pauseRef.current = false;
+    stepNextRef.current = false;
+    contextRef.current = {};
+    // 重置所有节点状态
+    nodes.forEach(n => onNodeStatusChange?.(n.id, 'idle'));
+    message.info('流程已重置');
+  }, [nodes, onNodeStatusChange, onRunningModeChange]);
+
+  // 切换断点（通过 WorkflowEditor 管理）
+  // const toggleBreakpoint = useCallback((nodeId: string) => {
+  //   setBreakpoints(prev => {
+  //     const next = new Set(prev);
+  //     if (next.has(nodeId)) next.delete(nodeId);
+  //     else next.add(nodeId);
+  //     return next;
+  //   });
+  // }, []);
 
   const showInput = !isRunning && currentNodeId !== null;
   const showStartButton = !isRunning && currentNodeId === null && messages.length === 0;
   const showRestartButton = !isRunning && currentNodeId === null && messages.length > 0;
 
-  console.log('[WorkflowPreview] Render - isRunning:', isRunning, 'currentNodeId:', currentNodeId, 'messages.length:', messages.length, 'showStartButton:', showStartButton, 'showRestartButton:', showRestartButton);
+  // 获取当前选中节点的执行数据
+  const selectedNodeData = selectedNodeId ? executionData[selectedNodeId] : null;
+  const selectedNodeInfo = selectedNodeId ? nodes.find(n => n.id === selectedNodeId) : null;
+
+  // 进度百分比
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   return (
-    <Modal
-      title={`工作流预览 - ${workflowName}`}
+    <Drawer
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>工作流运行 - {workflowName}</span>
+          <Space size="small">
+            {isRunning && (
+              <Badge status="processing" text="执行中" />
+            )}
+            {isPaused && (
+              <Badge status="warning" text="已暂停" />
+            )}
+          </Space>
+        </div>
+      }
+      placement="right"
+      width="33vw"
+      onClose={onClose}
       open={visible}
-      onCancel={onClose}
-      width={800}
-      footer={null}
+      mask={false}
+      style={{ position: 'absolute' }}
+      getContainer={false}
+      extra={
+        <Button type="text" icon={<CloseOutlined />} onClick={onClose} />
+      }
     >
-      <div style={{ height: '500px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {/* 进度条 */}
+        {isRunningMode && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <Text type="secondary" style={{ fontSize: '12px' }}>执行进度</Text>
+              <Text type="secondary" style={{ fontSize: '12px' }}>{completedCount}/{totalCount} 节点</Text>
+            </div>
+            <Progress percent={progressPercent} size="small" status={isRunning ? 'active' : undefined} />
+          </div>
+        )}
+
+        {/* 调试控制栏 */}
+        {isRunningMode && (
+          <div style={{ display: 'flex', gap: '8px', padding: '8px', background: '#f6ffed', borderRadius: '6px', alignItems: 'center' }}>
+            <Button.Group size="small">
+              {isRunning ? (
+                <Button
+                  icon={isPaused ? <PlayCircleOutlined /> : <PauseOutlined />}
+                  onClick={handlePauseResume}
+                >
+                  {isPaused ? '继续' : '暂停'}
+                </Button>
+              ) : null}
+              {isDebugMode && isPaused && (
+                <Button icon={<StepForwardOutlined />} onClick={handleStepNext}>
+                  单步
+                </Button>
+              )}
+              <Button icon={<ReloadOutlined />} onClick={handleReset}>
+                重置
+              </Button>
+            </Button.Group>
+            <div style={{ marginLeft: 'auto' }}>
+              <Button
+                size="small"
+                type={isDebugMode ? 'primary' : 'default'}
+                onClick={() => setIsDebugMode(!isDebugMode)}
+              >
+                {isDebugMode ? '退出调试' : '调试模式'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* 执行日志 */}
+        {isRunningMode && executionLogs.length > 0 && (
+          <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#fafafa', borderRadius: '6px', padding: '8px' }}>
+            <Text type="secondary" style={{ fontSize: '12px', fontWeight: 600 }}>执行日志</Text>
+            <div style={{ marginTop: '4px' }}>
+              {executionLogs.map((log) => (
+                <div
+                  key={log.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '3px 0',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => onNodeClick?.(log.nodeId)}
+                >
+                  {log.status === 'running' && <Badge status="processing" />}
+                  {log.status === 'success' && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '12px' }} />}
+                  {log.status === 'failed' && <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: '12px' }} />}
+                  <Text style={{ fontSize: '12px' }}>{log.nodeName}</Text>
+                  <Text type="secondary" style={{ fontSize: '11px', marginLeft: 'auto' }}>
+                    {log.duration ? `${log.duration}ms` : ''}
+                  </Text>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <Divider style={{ margin: '0' }} />
+
+        {/* 节点数据面板（当点击节点时显示） */}
+        {selectedNodeId && selectedNodeData && (
+          <div style={{ background: '#f0f5ff', borderRadius: '6px', padding: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <Text strong style={{ fontSize: '13px' }}>
+                {selectedNodeInfo?.data?.label || '节点'} 数据
+              </Text>
+              {selectedNodeData.duration && (
+                <Text type="secondary" style={{ fontSize: '11px' }}>
+                  <ClockCircleOutlined /> {selectedNodeData.duration}ms
+                </Text>
+              )}
+            </div>
+
+            {/* 输入数据 */}
+            {selectedNodeData.input && Object.keys(selectedNodeData.input).length > 0 && (
+              <div style={{ marginBottom: '8px' }}>
+                <Text type="secondary" style={{ fontSize: '11px' }}>输入</Text>
+                <div style={{ background: '#fff', borderRadius: '4px', padding: '6px', marginTop: '2px', fontSize: '11px', maxHeight: '80px', overflow: 'auto' }}>
+                  <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    {JSON.stringify(selectedNodeData.input, null, 2).slice(0, 500)}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* 输出数据 */}
+            {selectedNodeData.output && Object.keys(selectedNodeData.output).length > 0 && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text type="secondary" style={{ fontSize: '11px' }}>输出</Text>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    style={{ fontSize: '11px', padding: '0 4px', height: 'auto' }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(selectedNodeData.output, null, 2));
+                      message.success('已复制');
+                    }}
+                  >
+                    复制
+                  </Button>
+                </div>
+                <div style={{ background: '#fff', borderRadius: '4px', padding: '6px', marginTop: '2px', fontSize: '11px', maxHeight: '120px', overflow: 'auto' }}>
+                  <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    {JSON.stringify(selectedNodeData.output, null, 2).slice(0, 800)}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {selectedNodeData.error && (
+              <div style={{ marginTop: '8px', padding: '6px', background: '#fff2f0', borderRadius: '4px', border: '1px solid #ffccc7' }}>
+                <Text type="danger" style={{ fontSize: '11px' }}>
+                  <ExclamationCircleOutlined /> {selectedNodeData.error}
+                </Text>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 对话消息区域 */}
         <div style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '16px',
+          padding: '12px',
           background: '#f5f5f5',
           borderRadius: '8px',
-          marginBottom: '16px'
         }}>
           {messages.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#999', padding: '40px' }}>
               <PlayCircleOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
-              <p>点击"开始执行"启动工作流预览</p>
+              <p>点击"开始执行"启动工作流</p>
             </div>
           ) : (
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
@@ -877,7 +1082,7 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
                         {msg.nodeName}
                       </div>
                     )}
-                    <div>{msg.content}</div>
+                    <div dangerouslySetInnerHTML={{ __html: msg.content }} />
                   </Card>
 
                   {msg.type === 'user' && (
@@ -900,6 +1105,7 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
           )}
         </div>
 
+        {/* 底部输入区域 */}
         <div style={{ display: 'flex', gap: '8px' }}>
           {showStartButton && (
             <Button
@@ -907,7 +1113,6 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
               icon={<PlayCircleOutlined />}
               onClick={(e) => {
                 e.stopPropagation();
-                console.log('[WorkflowPreview] 开始执行按钮被点击');
                 startExecution();
               }}
               block
@@ -947,7 +1152,6 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
               icon={<PlayCircleOutlined />}
               onClick={(e) => {
                 e.stopPropagation();
-                console.log('[WorkflowPreview] 重新执行按钮被点击');
                 startExecution();
               }}
               block
@@ -957,7 +1161,7 @@ const WorkflowPreview: FC<WorkflowPreviewProps> = ({
           )}
         </div>
       </div>
-    </Modal>
+    </Drawer>
   );
 };
 

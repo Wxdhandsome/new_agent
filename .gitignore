@@ -1,11 +1,43 @@
 # ===========================================
-# Python
+# 环境变量与敏感配置 (最高优先级)
 # ===========================================
+
+# 所有环境变量文件（除示例外）
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+!.env.example
+!.env.template
+
+# 前端环境变量
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/.env.development
+frontend/.env.production
+!frontend/.env.example
+
+# 后端环境变量
+backend/.env
+backend/.env.local
+backend/.env.*.local
+!backend/.env.example
+
+# ===========================================
+# Python / 后端
+# ===========================================
+
+# Python 缓存
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# 构建产物
 build/
 develop-eggs/
 dist/
@@ -21,96 +53,245 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# 测试与类型检查
 .pytest_cache/
 .mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+
+# 后端特定
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.egg-info/
+backend/.pytest_cache/
+backend/.mypy_cache/
 
 # ===========================================
-# Virtual Environments
+# Node.js / 前端
 # ===========================================
-venv/
-ENV/
-env/
-.venv/
+
+# 依赖目录
+node_modules/
+frontend/node_modules/
+
+# 构建产物
+frontend/dist/
+frontend/dist-ssr/
+frontend/build/
+
+# Vite 本地配置
+frontend/*.local
+frontend/.vite/
+
+# npm/yarn/pnpm 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 包管理器锁定文件（可选，根据团队规范决定是否忽略）
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
 
 # ===========================================
-# IDEs
+# 数据库与数据文件
 # ===========================================
+
+# SQLite 数据库
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+
+# 后端数据库文件
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+backend/*.db-journal
+
+# 数据库迁移备份
+migrations/versions/*.bak
+
+# ===========================================
+# 上传文件与静态资源
+# ===========================================
+
+# 上传目录
+uploads/
+backend/uploads/
+frontend/public/uploads/
+
+# 用户生成内容
+media/
+staticfiles/
+
+# ===========================================
+# 向量数据库与 AI 模型相关
+# ===========================================
+
+# Milvus 本地数据
+milvus_data/
+milvus_db/
+volumes/milvus/
+
+# 模型文件与缓存
+models/
+*.onnx
+*.pt
+*.pth
+*.h5
+*.pb
+*.ckpt
+*.safetensors
+
+# Embedding 缓存
+embeddings_cache/
+
+# ===========================================
+# 日志文件
+# ===========================================
+
+logs/
+*.log
+*.log.*
+log/
+
+# 后端日志
+backend/logs/
+backend/*.log
+
+# ===========================================
+# IDE 与编辑器
+# ===========================================
+
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 *.sublime-project
 *.sublime-workspace
 
 # ===========================================
-# Environment variables (敏感配置)
+# 证书与密钥 (绝对不可提交)
 # ===========================================
-.env
-.env.local
-.env.*.local
-!.env.example
+
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+
+# SSH 密钥
+.ssh/
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+known_hosts
+
+# JWT 密钥
+jwt_private_key
+jwt_public_key
 
 # ===========================================
-# Database & Data
+# Docker 与部署配置 (含敏感信息)
 # ===========================================
-*.db
-*.sqlite
-*.sqlite3
-*.db-journal
 
-# 上传文件目录
-uploads/
-backend/uploads/
+docker-compose.override.yml
+docker-compose.override.yaml
+.env.docker
+.env.deploy
 
-# Milvus 数据（如果使用本地 Milvus）
-milvus_data/
-
-# ===========================================
-# Logs
-# ===========================================
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Kubernetes secrets
+*k8s-secret*
+*secret*.yaml
+!secret.example.yaml
 
 # ===========================================
-# Backend specific
+# 临时文件与缓存
 # ===========================================
-backend/__pycache__/
-backend/**/__pycache__/
-backend/*.db
-backend/*.db-journal
-backend/.env
 
-# ===========================================
-# Frontend specific
-# ===========================================
-frontend/node_modules/
-frontend/dist/
-frontend/dist-ssr/
-frontend/*.local
-frontend/.env
-frontend/.env.*
-!frontend/.env.example
-
-# ===========================================
-# Misc
-# ===========================================
 *.bak
 *.tmp
+*.temp
+*.old
+*.orig
+*.rej
+
 .cache/
+tmp/
+temp/
+
+# 进程文件
 *.pid
 *.seed
 *.pid.lock
 
-# 测试覆盖率
+# ===========================================
+# 测试覆盖率报告
+# ===========================================
+
 coverage/
 htmlcov/
 .coverage
+.coverage.*
+.nyc_output/
 
-# 临时文件
-tmp/
-temp/
+# ===========================================
+# 文档生成
+# ===========================================
+
+docs/_build/
+site/
+
+# ===========================================
+# 项目特定 - Workflow AI
+# ===========================================
+
+# 工作流执行缓存
+workflow_cache/
+execution_cache/
+
+# 知识库临时文件
+kb_temp/
+chunks_temp/
+
+# 导出文件
+exports/
+*.export
+
+# 学术论文生成文件（如果包含敏感数据）
+*.pdf
+*.docx
+
+# ===========================================
+# 操作系统文件
+# ===========================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+
+# Linux
+.directory
+.Trash-*

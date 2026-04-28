@@ -82,14 +82,14 @@ const ParamSelect: FC<ParamSelectProps> = ({
       optionFilterProp="children"
       dropdownRender={dropdownRender}
       popupMatchSelectWidth={false}
-      dropdownStyle={{ minWidth: '280px', maxWidth: '400px' }}
+      dropdownStyle={{ minWidth: '320px', maxWidth: '450px' }}
     >
       {sortedSources.map(([source, sourceParams]) => (
-        <Select.OptGroup 
-          key={source} 
+        <Select.OptGroup
+          key={source}
           label={
-            <span style={{ 
-              fontWeight: 600, 
+            <span style={{
+              fontWeight: 600,
               color: '#262626',
               fontSize: '13px',
               padding: '4px 0'
@@ -102,30 +102,32 @@ const ParamSelect: FC<ParamSelectProps> = ({
             <Option key={param.id} value={param.id}>
               <Space direction="vertical" size={0} style={{ width: '100%' }}>
                 <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                  <span style={{ 
-                    fontSize: '14px', 
+                  <span style={{
+                    fontSize: '14px',
                     color: '#262626',
-                    maxWidth: '180px',
+                    maxWidth: '220px',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
+                    whiteSpace: 'nowrap',
+                    display: 'inline-block',
                   }}>
                     {param.label}
                   </span>
-                  <Tag 
+                  <Tag
                     color={typeColors[param.type] || 'default'}
-                    style={{ fontSize: '11px', margin: 0 }}
+                    style={{ fontSize: '11px', margin: 0, flexShrink: 0 }}
                   >
                     {param.type}
                   </Tag>
                 </Space>
-                <span style={{ 
-                  fontSize: '12px', 
+                <span style={{
+                  fontSize: '12px',
                   color: '#8c8c8c',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
-                  maxWidth: '250px'
+                  maxWidth: '280px',
+                  display: 'inline-block',
                 }}>
                   ID: {param.id}
                   {param.description && ` · ${param.description}`}

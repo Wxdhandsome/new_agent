@@ -5,7 +5,7 @@ import type { WorkflowCreateRequest, WorkflowUpdateRequest } from '../types';
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
 
 // 创建 axios 实例
-const api = axios.create({
+export const api = axios.create({
   baseURL: `${BACKEND_URL}/api`,
   timeout: 30000,
   headers: {
@@ -116,12 +116,12 @@ export const kbApi = {
     const formData = new FormData();
     formData.append('kb_id', kbId);
     formData.append('file', file);
-    const response = await fetch(`${api.defaults.baseURL}/kb/${kbId}/documents/upload`, {
-      method: 'POST',
-      body: formData,
+    const response = await api.post(`/kb/${kbId}/documents/upload`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
     });
-    if (!response.ok) throw new Error('上传失败');
-    return response.json();
+    return response.data;
   },
 
   deleteDocument: async (docId: string) => {

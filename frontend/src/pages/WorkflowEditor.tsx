@@ -13,15 +13,26 @@ import ReactFlow, {
   ReactFlowProvider,
   useReactFlow,
   Node,
+  Edge,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Layout, Button, Space, message, Input } from 'antd';
-import { SaveOutlined, PlayCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import { workflowApi } from '../api';
+import { Layout, Button, Space, message, Input, Tooltip, Spin, Badge } from 'antd';
+import {
+  SaveOutlined,
+  PlayCircleOutlined,
+  ArrowLeftOutlined,
+  PlusOutlined,
+  CompressOutlined,
+  CheckCircleOutlined,
+  ExclamationCircleOutlined,
+  PauseOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
+import { workflowApi, api } from '../api';
 import type { Workflow } from '../types';
 import NodeConfigPanel from '../components/NodeConfig';
 import { ParamPoolProvider, useParamPool } from '../contexts/ParamPoolContext';
-import WorkflowPreview from '../components/WorkflowPreview';
+import WorkflowPreview, { type NodeExecutionStatus } from '../components/WorkflowPreview';
 
 const { Header, Content, Sider } = Layout;
 
@@ -32,289 +43,343 @@ interface WorkflowEditorProps {
   autoOpenPreview?: boolean;
 }
 
-// 节点类型定义（用于React Flow）
-const nodeTypeMap = {
-  start: 'start',
-  input: 'input',
-  llm: 'llm',
-  condition: 'condition',
-  code: 'code',
-  rag: 'rag',
-  output: 'output',
-  end: 'end',
-};
+// ========== 节点类型配置 ==========
+interface NodeTypeConfig {
+  type: string;
+  label: string;
+  icon: string;
+  color: string;
+  category: 'high' | 'low' | 'boundary';
+  sceneTag: string;
+  tooltip: string;
+}
 
-// 节点组件 - 开始节点
-const StartNode = ({ data }: any) => {
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#52c41a', 
-      color: 'white', 
-      borderRadius: '8px', 
-      minWidth: '120px', 
-      textAlign: 'center',
-      border: '2px solid #52c41a'
-    }}>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#52c41a' }} />
-      <div style={{ fontWeight: 'bold' }}>🚀 {data.label || '开始'}</div>
-    </div>
-  );
-};
+const NODE_TYPES: NodeTypeConfig[] = [
+  { type: 'input', label: '输入', icon: '📥', color: '#1890ff', category: 'high', sceneTag: '数据输入', tooltip: '接收用户输入，支持文本、数字等多种类型' },
+  { type: 'llm', label: '大模型', icon: '🤖', color: '#722ed1', category: 'high', sceneTag: '对话 / 推理', tooltip: '调用大语言模型进行对话或推理' },
+  { type: 'condition', label: '条件分支', icon: '🔀', color: '#fa8c16', category: 'high', sceneTag: '逻辑判断', tooltip: '根据条件表达式进行分支跳转' },
+  { type: 'output', label: '输出', icon: '📤', color: '#eb2f96', category: 'high', sceneTag: '结果输出', tooltip: '生成最终输出，支持模板渲染' },
+  { type: 'code', label: '代码', icon: '💻', color: '#13c2c2', category: 'low', sceneTag: '自定义处理', tooltip: '执行 Python 代码进行自定义处理' },
+  { type: 'rag', label: '知识库检索', icon: '📚', color: '#2f54eb', category: 'low', sceneTag: '知识问答', tooltip: '从绑定的知识库中检索信息' },
+  { type: 'start', label: '开始', icon: '🚀', color: '#52c41a', category: 'boundary', sceneTag: '流程起点', tooltip: '工作流的起始节点' },
+  { type: 'end', label: '结束', icon: '🏁', color: '#ff4d4f', category: 'boundary', sceneTag: '流程终点', tooltip: '工作流的结束节点' },
+];
 
-// 节点组件 - 输入节点
-const InputNode = ({ data }: any) => {
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#fff', 
-      border: '2px solid #1890ff', 
-      borderRadius: '8px', 
-      minWidth: '140px', 
-      textAlign: 'center' 
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#1890ff' }} />
-      <div style={{ fontWeight: 'bold', color: '#1890ff' }}>📥 {data.label || '输入'}</div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#1890ff' }} />
-    </div>
-  );
-};
+const getNodeConfig = (type: string) => NODE_TYPES.find(n => n.type === type) || NODE_TYPES[0];
 
-// 节点组件 - 大模型节点
-const LLMNode = ({ data }: any) => {
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#fff', 
-      border: '2px solid #722ed1', 
-      borderRadius: '8px', 
-      minWidth: '140px', 
-      textAlign: 'center' 
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#722ed1' }} />
-      <div style={{ fontWeight: 'bold', color: '#722ed1' }}>🤖 {data.label || '大模型'}</div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#722ed1' }} />
-    </div>
-  );
-};
+// ========== 带执行状态的节点组件 ==========
+interface NodeProps {
+  data: any;
+  executionStatus?: NodeExecutionStatus;
+  isBreakpoint?: boolean;
+  onToggleBreakpoint?: () => void;
+}
 
-// 节点组件 - 条件分支节点
-const ConditionNode = ({ data }: any) => {
-  const conditions = data.conditions || [];
-  // const totalBranches = conditions.length + 1; // 条件分支 + 默认分支 (暂不使用)
+const BaseNode = ({ type, children, isConfigured, executionStatus, isBreakpoint, onToggleBreakpoint }: any) => {
+  const config = getNodeConfig(type);
+  const [isHovered, setIsHovered] = useState(false);
 
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#fff', 
-      border: '2px solid #fa8c16', 
-      borderRadius: '8px', 
-      minWidth: '180px', 
-      textAlign: 'center' 
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#fa8c16' }} />
-      <div style={{ fontWeight: 'bold', color: '#fa8c16', marginBottom: '8px' }}>
-        🔀 {data.label || '条件分支'}
-      </div>
-      
-      {/* 动态生成条件分支连接点 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
-        {conditions.map((cond: any, index: number) => (
-          <div key={cond?.id || `cond_${index}`} style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            padding: '2px 4px',
-            background: '#fff7e6',
-            borderRadius: '4px',
-            fontSize: '11px'
-          }}>
-            <span style={{ color: '#fa8c16' }}>条件{index + 1}</span>
-            <Handle 
-              type="source" 
-              position={Position.Right} 
-              id={cond?.id || `cond_${index}`}
-              style={{ 
-                background: '#fa8c16', 
-                width: '8px', 
-                height: '8px',
-                position: 'relative',
-                right: '-4px'
-              }} 
-            />
-          </div>
-        ))}
-        
-        {/* 默认分支 */}
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'space-between',
-          padding: '2px 4px',
-          background: '#f5f5f5',
-          borderRadius: '4px',
-          fontSize: '11px'
-        }}>
-          <span style={{ color: '#999' }}>默认</span>
-          <Handle 
-            type="source" 
-            position={Position.Right} 
-            id="default"
-            style={{ 
-              background: '#999', 
-              width: '8px', 
-              height: '8px',
-              position: 'relative',
-              right: '-4px'
-            }} 
-          />
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// 节点组件 - 代码节点
-const CodeNode = ({ data }: any) => {
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#fff', 
-      border: '2px solid #13c2c2', 
-      borderRadius: '8px', 
-      minWidth: '140px', 
-      textAlign: 'center' 
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#13c2c2' }} />
-      <div style={{ fontWeight: 'bold', color: '#13c2c2' }}>💻 {data.label || '代码'}</div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#13c2c2' }} />
-    </div>
-  );
-};
-
-// 节点组件 - RAG 知识库检索节点
-const RAGNode = ({ data }: any) => {
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#fff', 
-      border: '2px solid #2f54eb', 
-      borderRadius: '8px', 
-      minWidth: '160px', 
-      textAlign: 'center' 
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#2f54eb' }} />
-      <div style={{ fontWeight: 'bold', color: '#2f54eb' }}>📚 {data.label || '知识库检索'}</div>
-      {data.kbName && (
-        <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
-          {data.kbName}
-        </div>
-      )}
-      <Handle type="source" position={Position.Bottom} style={{ background: '#2f54eb' }} />
-    </div>
-  );
-};
-
-// 节点组件 - 输出节点
-const OutputNode = ({ data }: any) => {
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#fff', 
-      border: '2px solid #eb2f96', 
-      borderRadius: '8px', 
-      minWidth: '140px', 
-      textAlign: 'center' 
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#eb2f96' }} />
-      <div style={{ fontWeight: 'bold', color: '#eb2f96' }}>📤 {data.label || '输出'}</div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#eb2f96' }} />
-    </div>
-  );
-};
-
-// 节点组件 - 结束节点
-const EndNode = ({ data }: any) => {
-  return (
-    <div style={{ 
-      padding: '10px', 
-      background: '#ff4d4f', 
-      color: 'white', 
-      borderRadius: '8px', 
-      minWidth: '120px', 
-      textAlign: 'center',
-      border: '2px solid #ff4d4f'
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#ff4d4f' }} />
-      <div style={{ fontWeight: 'bold' }}>🏁 {data.label || '结束'}</div>
-    </div>
-  );
-};
-
-const nodeTypeComponents = {
-  start: StartNode,
-  input: InputNode,
-  llm: LLMNode,
-  condition: ConditionNode,
-  code: CodeNode,
-  rag: RAGNode,
-  output: OutputNode,
-  end: EndNode,
-};
-
-// 侧边栏可拖拽节点组件
-const DraggableNode = ({ type, label, icon, color }: { type: string; label: string; icon: string; color: string }) => {
-  const onDragStart = (event: React.DragEvent) => {
-    event.dataTransfer.setData('application/reactflow', type);
-    event.dataTransfer.effectAllowed = 'move';
+  // 根据执行状态确定样式
+  const getStatusStyles = () => {
+    switch (executionStatus) {
+      case 'running':
+        return {
+          border: `2px solid ${config.color}`,
+          boxShadow: `0 0 0 4px ${config.color}20, 0 0 20px ${config.color}40`,
+          animation: 'nodePulse 2s ease-in-out infinite',
+        };
+      case 'success':
+        return {
+          border: `2px solid #52c41a`,
+          boxShadow: `0 2px 8px #52c41a30`,
+        };
+      case 'failed':
+        return {
+          border: `2px solid #ff4d4f`,
+          boxShadow: `0 2px 8px #ff4d4f30`,
+        };
+      default:
+        return {
+          border: isConfigured
+            ? `2px solid ${config.color}`
+            : `2px dashed ${isHovered ? config.color : '#d9d9d9'}`,
+          boxShadow: isHovered
+            ? `0 4px 16px ${config.color}30`
+            : '0 1px 3px rgba(0,0,0,0.06)',
+        };
+    }
   };
+
+  const statusStyles = getStatusStyles();
 
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       style={{
-        padding: '12px',
-        marginBottom: '8px',
-        background: '#fff',
-        border: `2px solid ${color}`,
-        borderRadius: '8px',
-        cursor: 'grab',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        transition: 'all 0.2s',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = '#f0f0f0';
-        e.currentTarget.style.transform = 'translateX(4px)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = '#fff';
-        e.currentTarget.style.transform = 'translateX(0)';
+        padding: '10px 14px',
+        background: type === 'start' || type === 'end' ? config.color : '#fff',
+        color: type === 'start' || type === 'end' ? 'white' : '#1f2937',
+        borderRadius: '10px',
+        minWidth: type === 'start' || type === 'end' ? '100px' : '140px',
+        textAlign: 'center',
+        transition: 'all 0.3s ease',
+        position: 'relative',
+        ...statusStyles,
       }}
     >
-      <span style={{ fontSize: '20px' }}>{icon}</span>
-      <span style={{ fontWeight: 500, color }}>{label}</span>
+      {/* 执行状态指示器 */}
+      {executionStatus === 'running' && (
+        <div style={{
+          position: 'absolute',
+          top: '-8px',
+          right: '-8px',
+          zIndex: 10,
+        }}>
+          <Spin size="small" />
+        </div>
+      )}
+      {executionStatus === 'success' && (
+        <CheckCircleOutlined style={{
+          position: 'absolute',
+          top: '-8px',
+          right: '-8px',
+          color: '#52c41a',
+          fontSize: '16px',
+          background: '#fff',
+          borderRadius: '50%',
+          zIndex: 10,
+        }} />
+      )}
+      {executionStatus === 'failed' && (
+        <Tooltip title="执行失败">
+          <ExclamationCircleOutlined style={{
+            position: 'absolute',
+            top: '-8px',
+            right: '-8px',
+            color: '#ff4d4f',
+            fontSize: '16px',
+            background: '#fff',
+            borderRadius: '50%',
+            zIndex: 10,
+          }} />
+        </Tooltip>
+      )}
+
+      {/* 配置状态指示器（仅在非运行状态显示） */}
+      {!executionStatus && isConfigured && type !== 'start' && type !== 'end' && (
+        <CheckCircleOutlined
+          style={{
+            position: 'absolute',
+            top: '-8px',
+            right: '-8px',
+            color: '#52c41a',
+            fontSize: '16px',
+            background: '#fff',
+            borderRadius: '50%',
+          }}
+        />
+      )}
+      {!executionStatus && !isConfigured && type !== 'start' && type !== 'end' && (
+        <Tooltip title="点击右侧面板配置节点">
+          <ExclamationCircleOutlined
+            style={{
+              position: 'absolute',
+              top: '-8px',
+              right: '-8px',
+              color: '#faad14',
+              fontSize: '16px',
+              background: '#fff',
+              borderRadius: '50%',
+            }}
+          />
+        </Tooltip>
+      )}
+
+      {/* 断点标记 */}
+      {onToggleBreakpoint && (
+        <div
+          onClick={(e) => { e.stopPropagation(); onToggleBreakpoint(); }}
+          style={{
+            position: 'absolute',
+            top: '-8px',
+            left: '-8px',
+            cursor: 'pointer',
+            zIndex: 10,
+            opacity: isHovered || isBreakpoint ? 1 : 0,
+            transition: 'opacity 0.2s',
+          }}
+        >
+          <PauseOutlined
+            style={{
+              color: isBreakpoint ? '#ff4d4f' : '#bfbfbf',
+              fontSize: '14px',
+              background: '#fff',
+              borderRadius: '50%',
+              padding: '2px',
+            }}
+          />
+        </div>
+      )}
+
+      {children}
     </div>
   );
 };
 
-// React Flow 画布组件
+const StartNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => (
+  <BaseNode type="start" isConfigured={true} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+    <Handle type="source" position={Position.Bottom} style={{ background: '#52c41a', width: '10px', height: '10px' }} />
+    <div style={{ fontWeight: 600, fontSize: '14px' }}>🚀 {data.label || '开始'}</div>
+  </BaseNode>
+);
+
+const InputNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => (
+  <BaseNode type="input" isConfigured={!!data.inputType} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+    <Handle type="target" position={Position.Top} style={{ background: '#1890ff', width: '10px', height: '10px' }} />
+    <div style={{ fontWeight: 600, color: '#1890ff', fontSize: '14px' }}>📥 {data.label || '输入'}</div>
+    <Handle type="source" position={Position.Bottom} style={{ background: '#1890ff', width: '10px', height: '10px' }} />
+  </BaseNode>
+);
+
+const LLMNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => (
+  <BaseNode type="llm" isConfigured={!!data.model} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+    <Handle type="target" position={Position.Top} style={{ background: '#722ed1', width: '10px', height: '10px' }} />
+    <div style={{ fontWeight: 600, color: '#722ed1', fontSize: '14px' }}>🤖 {data.label || '大模型'}</div>
+    <Handle type="source" position={Position.Bottom} style={{ background: '#722ed1', width: '10px', height: '10px' }} />
+  </BaseNode>
+);
+
+const ConditionNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => {
+  const conditions = data.conditions || [];
+  return (
+    <BaseNode type="condition" isConfigured={conditions.length > 0} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+      <Handle type="target" position={Position.Top} style={{ background: '#fa8c16', width: '10px', height: '10px' }} />
+      <div style={{ fontWeight: 600, color: '#fa8c16', fontSize: '14px', marginBottom: '6px' }}>
+        🔀 {data.label || '条件分支'}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+        {conditions.map((cond: any, index: number) => (
+          <div key={cond?.id || `cond_${index}`} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '2px 6px', background: '#fff7e6', borderRadius: '4px', fontSize: '11px'
+          }}>
+            <span style={{ color: '#fa8c16' }}>条件{index + 1}</span>
+            <Handle type="source" position={Position.Right} id={cond?.id || `cond_${index}`}
+              style={{ background: '#fa8c16', width: '8px', height: '8px', position: 'relative', right: '-6px' }} />
+          </div>
+        ))}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '2px 6px', background: '#f5f5f5', borderRadius: '4px', fontSize: '11px'
+        }}>
+          <span style={{ color: '#999' }}>默认</span>
+          <Handle type="source" position={Position.Right} id="default"
+            style={{ background: '#999', width: '8px', height: '8px', position: 'relative', right: '-6px' }} />
+        </div>
+      </div>
+    </BaseNode>
+  );
+};
+
+const CodeNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => (
+  <BaseNode type="code" isConfigured={!!data.code} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+    <Handle type="target" position={Position.Top} style={{ background: '#13c2c2', width: '10px', height: '10px' }} />
+    <div style={{ fontWeight: 600, color: '#13c2c2', fontSize: '14px' }}>💻 {data.label || '代码'}</div>
+    <Handle type="source" position={Position.Bottom} style={{ background: '#13c2c2', width: '10px', height: '10px' }} />
+  </BaseNode>
+);
+
+const RAGNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => (
+  <BaseNode type="rag" isConfigured={!!data.kbId} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+    <Handle type="target" position={Position.Top} style={{ background: '#2f54eb', width: '10px', height: '10px' }} />
+    <div style={{ fontWeight: 600, color: '#2f54eb', fontSize: '14px' }}>📚 {data.label || '知识库检索'}</div>
+    {data.kbName && <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>{data.kbName}</div>}
+    <Handle type="source" position={Position.Bottom} style={{ background: '#2f54eb', width: '10px', height: '10px' }} />
+  </BaseNode>
+);
+
+const OutputNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => (
+  <BaseNode type="output" isConfigured={!!data.template} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+    <Handle type="target" position={Position.Top} style={{ background: '#eb2f96', width: '10px', height: '10px' }} />
+    <div style={{ fontWeight: 600, color: '#eb2f96', fontSize: '14px' }}>📤 {data.label || '输出'}</div>
+    <Handle type="source" position={Position.Bottom} style={{ background: '#eb2f96', width: '10px', height: '10px' }} />
+  </BaseNode>
+);
+
+const EndNode = ({ data, executionStatus, isBreakpoint, onToggleBreakpoint }: NodeProps) => (
+  <BaseNode type="end" isConfigured={true} executionStatus={executionStatus} isBreakpoint={isBreakpoint} onToggleBreakpoint={onToggleBreakpoint}>
+    <Handle type="target" position={Position.Top} style={{ background: '#ff4d4f', width: '10px', height: '10px' }} />
+    <div style={{ fontWeight: 600, fontSize: '14px' }}>🏁 {data.label || '结束'}</div>
+  </BaseNode>
+);
+
+// ========== 左侧组件面板 ==========
+const DraggableNodeItem = ({ config, onAdd }: { config: NodeTypeConfig; onAdd: (type: string) => void }) => {
+  const [isHovered, setIsHovered] = useState(false);
+
+  const onDragStart = (event: React.DragEvent) => {
+    event.dataTransfer.setData('application/reactflow', config.type);
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
+  const isBoundary = config.category === 'boundary';
+  const isHigh = config.category === 'high';
+
+  return (
+    <Tooltip title={config.tooltip} placement="right">
+      <div
+        draggable
+        onDragStart={onDragStart}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        style={{
+          padding: isBoundary ? '8px 12px' : '10px 12px',
+          marginBottom: '6px',
+          background: isHigh ? '#f6ffed' : '#fff',
+          border: isHovered ? `1.5px solid ${config.color}` : '1.5px solid transparent',
+          borderRadius: '8px',
+          cursor: 'grab',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+          transition: 'all 0.25s ease',
+          boxShadow: isHovered ? `0 2px 8px ${config.color}25` : '0 1px 2px rgba(0,0,0,0.04)',
+          transform: isHovered ? 'translateX(3px)' : 'translateX(0)',
+          minHeight: isBoundary ? '36px' : '52px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+          <span style={{ fontSize: '20px', lineHeight: 1 }}>{config.icon}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+            <span style={{ fontWeight: 600, color: '#1f2937', fontSize: '13px', lineHeight: 1.3 }}>{config.label}</span>
+            {!isBoundary && (
+              <span style={{ fontSize: '11px', color: '#8c8c8c', lineHeight: '1.2' }}>{config.sceneTag}</span>
+            )}
+          </div>
+        </div>
+        <Button
+          type="text"
+          size="small"
+          icon={<PlusOutlined style={{ color: config.color, fontSize: '14px' }} />}
+          onClick={(e) => { e.stopPropagation(); onAdd(config.type); }}
+          style={{ padding: '2px 4px', minWidth: 'auto', height: 'auto' }}
+        />
+      </div>
+    </Tooltip>
+  );
+};
+
+// ========== 主画布组件 ==========
 const FlowCanvas = ({
-  workflow,
-  readOnly,
-  workflowName,
-  setWorkflowName,
-  onBack,
-  onSave,
-  autoOpenPreview = false,
+  workflow, readOnly, workflowName, setWorkflowName, onBack, onSave, autoOpenPreview = false,
 }: any) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const { project } = useReactFlow();
   const { addParam } = useParamPool();
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -326,23 +391,19 @@ const FlowCanvas = ({
   const edgesRef = useRef(edges);
   const workflowNameRef = useRef(workflowName);
   const onSaveRef = useRef(onSave);
+  const isSavingRef = useRef(false);
 
-  // 同步 ref 值
-  useEffect(() => {
-    nodesRef.current = nodes;
-  }, [nodes]);
+  // 运行模式状态
+  const [isRunningMode, setIsRunningMode] = useState(false);
+  const [nodeExecutionStatuses, setNodeExecutionStatuses] = useState<Record<string, NodeExecutionStatus>>({});
+  const [breakpoints, setBreakpoints] = useState<Set<string>>(new Set());
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [selectedNodeForData, setSelectedNodeForData] = useState<string | null>(null);
 
-  useEffect(() => {
-    edgesRef.current = edges;
-  }, [edges]);
-
-  useEffect(() => {
-    workflowNameRef.current = workflowName;
-  }, [workflowName]);
-
-  useEffect(() => {
-    onSaveRef.current = onSave;
-  }, [onSave]);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
+  useEffect(() => { workflowNameRef.current = workflowName; }, [workflowName]);
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
 
   // 初始化数据
   useEffect(() => {
@@ -351,247 +412,142 @@ const FlowCanvas = ({
       setEdges(workflow.graphData.edges || []);
       setWorkflowName(workflow.workflowName);
     } else {
-      // 默认添加开始和结束节点
       setNodes([
-        {
-          id: 'start',
-          type: 'start',
-          position: { x: 250, y: 50 },
-          data: { label: '开始' },
-        },
-        {
-          id: 'end',
-          type: 'end',
-          position: { x: 250, y: 400 },
-          data: { label: '结束' },
-        },
+        { id: 'start', type: 'start', position: { x: 250, y: 50 }, data: { label: '开始' } },
+        { id: 'end', type: 'end', position: { x: 250, y: 400 }, data: { label: '结束' } },
       ]);
       setEdges([]);
     }
-    // 标记初始化完成
     isInitializedRef.current = true;
   }, [workflow?.workflowId, setNodes, setEdges, setWorkflowName]);
 
-  // 使用 ref 来跟踪保存状态，避免循环依赖
-  const isSavingRef = useRef(false);
+  const handleFitView = () => {
+    fitView({ padding: 0.2, duration: 800 });
+  };
 
-  // 自动保存功能 - 仅在有实质变更(dirty)时保存
+  // 自动保存
   const autoSave = useCallback(async () => {
     if (readOnly || isSavingRef.current || !isDirtyRef.current) return;
-
     const graphData = { nodes: nodesRef.current, edges: edgesRef.current };
-    const snapshot = JSON.stringify({
-      workflowName: workflowNameRef.current,
-      graphData,
-    });
+    const snapshot = JSON.stringify({ workflowName: workflowNameRef.current, graphData });
+    if (snapshot === lastSavedSnapshotRef.current) { isDirtyRef.current = false; return; }
 
-    // 快照未变化则不保存，避免“过一会儿自动保存一次”
-    if (snapshot === lastSavedSnapshotRef.current) {
-      isDirtyRef.current = false;
-      return;
-    }
-
-    isSavingRef.current = true;
-    setIsSaving(true);
+    isSavingRef.current = true; setIsSaving(true);
     try {
       await onSaveRef.current(workflowNameRef.current, graphData);
-      lastSavedSnapshotRef.current = snapshot;
-      isDirtyRef.current = false;
-      console.log('自动保存成功');
-    } catch (error) {
-      console.error('自动保存失败:', error);
-    } finally {
-      isSavingRef.current = false;
-      setIsSaving(false);
-    }
+      lastSavedSnapshotRef.current = snapshot; isDirtyRef.current = false;
+    } catch (error) { console.error('自动保存失败:', error); }
+    finally { isSavingRef.current = false; setIsSaving(false); }
   }, [readOnly]);
 
-  // 监听节点、边、名称变化，触发自动保存
   useEffect(() => {
     if (readOnly) return;
+    if (!isInitializedRef.current || !hasUserInteractionRef.current) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    isDirtyRef.current = true;
+    autoSaveTimerRef.current = setTimeout(() => autoSave(), 3000);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [nodes, edges, workflowName, readOnly, autoSave]);
 
-    // 只有在初始化完成后且有用户交互时才触发自动保存
-    if (!isInitializedRef.current || !hasUserInteractionRef.current) {
-      return;
-    }
-
-    // 清除之前的定时器
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-    }
-
-    // 设置新的定时器，10秒后自动保存（减少保存频率）
-    autoSaveTimerRef.current = setTimeout(() => {
-      autoSave();
-    }, 10000);
-
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-    };
-    // 注意：不将 autoSave 加入依赖数组，避免循环触发
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, workflowName, readOnly]);
-
-  // 标记用户交互的回调包装器
   const handleNodesChangeWithInteraction = useCallback((changes: any) => {
-    // 忽略纯选中类变化，避免无实质改动也触发自动保存
     const hasMeaningfulChange = Array.isArray(changes)
-      ? changes.some((c: any) => c.type !== 'select' && c.type !== 'dimensions')
-      : true;
-
-    if (hasMeaningfulChange) {
-      hasUserInteractionRef.current = true;
-      isDirtyRef.current = true;
-    }
-
+      ? changes.some((c: any) => c.type !== 'select' && c.type !== 'dimensions') : true;
+    if (hasMeaningfulChange) hasUserInteractionRef.current = true;
     onNodesChange(changes);
   }, [onNodesChange]);
 
   const handleEdgesChangeWithInteraction = useCallback((changes: any) => {
     const hasMeaningfulChange = Array.isArray(changes)
-      ? changes.some((c: any) => c.type !== 'select')
-      : true;
-
-    if (hasMeaningfulChange) {
-      hasUserInteractionRef.current = true;
-      isDirtyRef.current = true;
-    }
-
+      ? changes.some((c: any) => c.type !== 'select') : true;
+    if (hasMeaningfulChange) hasUserInteractionRef.current = true;
     onEdgesChange(changes);
   }, [onEdgesChange]);
 
   // 页面关闭前保存
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (!readOnly && autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-        autoSave();
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!readOnly && isDirtyRef.current) {
+        e.preventDefault(); e.returnValue = '';
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        const graphData = { nodes, edges };
+        const blob = new Blob([JSON.stringify({ workflowName, graphData })], { type: 'application/json' });
+        navigator.sendBeacon?.(`${(api.defaults.baseURL || '').replace('/api', '')}/api/workflow/${workflow?.workflowId || 'draft'}`, blob);
       }
     };
-    
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [autoSave, readOnly]);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [readOnly, nodes, edges, workflowName, workflow?.workflowId]);
 
-  const onConnect = useCallback(
-    (params: Connection) => {
-      hasUserInteractionRef.current = true;
-      isDirtyRef.current = true;
-      setEdges((eds) => addEdge({ ...params, animated: true, markerEnd: { type: MarkerType.ArrowClosed } }, eds));
-    },
-    [setEdges]
-  );
+  const onConnect = useCallback((params: Connection) => {
+    hasUserInteractionRef.current = true;
+    setEdges((eds) => addEdge({
+      ...params,
+      animated: true,
+      type: 'smoothstep',
+      style: { stroke: params.sourceHandle === 'default' ? '#bfbfbf' : '#52c41a', strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+    }, eds));
+  }, [setEdges]);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
-  const onDrop = useCallback(
-    (event: React.DragEvent) => {
-      event.preventDefault();
+  const onDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    const type = event.dataTransfer.getData('application/reactflow');
+    if (!type) return;
+    const position = screenToFlowPosition({
+      x: event.clientX - (reactFlowWrapper.current?.getBoundingClientRect().left || 0),
+      y: event.clientY - (reactFlowWrapper.current?.getBoundingClientRect().top || 0),
+    });
+    addNodeAtPosition(type, position);
+  }, [screenToFlowPosition]);
 
-      const type = event.dataTransfer.getData('application/reactflow');
-
-      if (typeof type === 'undefined' || !type) {
-        return;
-      }
-
-      const position = project({
-        x: event.clientX - (reactFlowWrapper.current?.getBoundingClientRect().left || 0),
-        y: event.clientY - (reactFlowWrapper.current?.getBoundingClientRect().top || 0),
-      });
-
-      const newNode = {
-        id: `${type}_${Date.now()}`,
-        type,
-        position,
-        data: { label: getNodeLabel(type) },
-      };
-
-      hasUserInteractionRef.current = true;
-      isDirtyRef.current = true;
-      setNodes((nds) => nds.concat(newNode));
-    },
-    [project, setNodes]
-  );
-
-  const getNodeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      start: '开始',
-      input: '输入',
-      llm: '大模型',
-      condition: '条件分支',
-      code: '代码',
-      rag: '知识库检索',
-      output: '输出',
-      end: '结束',
+  const addNodeAtPosition = (type: string, position: { x: number; y: number }) => {
+    const config = getNodeConfig(type);
+    const newNode = {
+      id: `${type}_${Date.now()}`,
+      type,
+      position,
+      data: { label: config.label },
     };
-    return labels[type] || '节点';
+    hasUserInteractionRef.current = true;
+    setNodes((nds) => nds.concat(newNode));
   };
 
-  // 收集节点参数到参数池
-  useEffect(() => {
-    // 收集节点参数
-    nodes.forEach(node => {
-      // 输入节点：每个输入节点有独立的参数
-      if (node.type === 'input') {
-        const paramType = node.data.inputType === 'number' ? 'number' : 'string';
-        const nodeLabel = node.data?.label || '输入';
-        addParam({
-          id: `user_input_${node.id}`,
-          label: `用户输入 (来自${nodeLabel})`,
-          type: paramType as any,
-          source: '输入节点',
-          description: `来自${nodeLabel}节点 (ID: ${node.id})`,
-        });
-      }
+  const handleAddNode = (type: string) => {
+    const centerX = reactFlowWrapper.current ? reactFlowWrapper.current.clientWidth / 2 : 300;
+    const centerY = reactFlowWrapper.current ? reactFlowWrapper.current.clientHeight / 2 : 200;
+    const position = screenToFlowPosition({ x: centerX, y: centerY });
+    position.x += (Math.random() - 0.5) * 60;
+    position.y += (Math.random() - 0.5) * 60;
+    addNodeAtPosition(type, position);
+    message.success(`已添加「${getNodeConfig(type).label}」节点`);
+  };
 
-      // 大模型节点：每个大模型节点有独立的参数
-      if (node.type === 'llm') {
-        const nodeLabel = node.data?.label || '大模型';
-        addParam({
-          id: `llm_output_${node.id}`,
-          label: `大模型输出 (来自${nodeLabel})`,
-          type: 'string',
-          source: '大模型节点',
-          description: `来自${nodeLabel}节点 (ID: ${node.id})`,
-        });
-      }
-      
-      // 代码节点：收集用户自定义的输出参数
-      if (node.type === 'code') {
-        const outputVars = node.data?.outputVars || [];
-        outputVars.forEach((outputVar: any) => {
-          if (outputVar.name) {
-            addParam({
-              id: outputVar.name,
-              label: `${outputVar.name} (来自${node.data?.label || '代码节点'})`,
-              type: (outputVar.type?.toLowerCase() || 'object') as any,
-              source: '代码节点',
-              description: `代码节点 ${node.data?.label || node.id} 的输出参数`,
-            });
-          }
-        });
-      }
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    if (isRunningMode) {
+      // 运行模式下点击节点查看数据
+      setSelectedNodeForData(node.id);
+    } else {
+      // 编辑模式下点击节点配置
+      setSelectedNode(node);
+    }
+  }, [isRunningMode]);
 
-      // RAG 节点：收集检索结果参数
-      if (node.type === 'rag') {
-        const outputVar = node.data?.outputVar || 'retrieved_result';
-        addParam({
-          id: outputVar,
-          label: `${outputVar} (来自${node.data?.label || '知识库检索'})`,
-          type: 'object',
-          source: '知识库检索',
-          description: `RAG 节点 ${node.data?.label || node.id} 的检索结果`,
-        });
-      }
+  const handleUpdateNode = useCallback((nodeId: string, newData: any) => {
+    hasUserInteractionRef.current = true;
+    setNodes((nds) => nds.map((node) => {
+      if (node.id === nodeId) return { ...node, data: { ...node.data, ...newData } };
+      return node;
+    }));
+    setSelectedNode((prev) => {
+      if (prev && prev.id === nodeId) return { ...prev, data: { ...prev.data, ...newData } };
+      return prev;
     });
-  }, [nodes, addParam]);
+  }, [setNodes]);
 
   const handleSave = async () => {
     try {
@@ -599,116 +555,227 @@ const FlowCanvas = ({
       await onSave(workflowName, graphData);
       lastSavedSnapshotRef.current = JSON.stringify({ workflowName, graphData });
       isDirtyRef.current = false;
+      message.success('保存成功');
     } catch (error) {
       message.error('保存失败');
     }
   };
 
-  // 节点点击事件
-  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    setSelectedNode(node);
-  }, []);
-
-  // 更新节点数据
-  const handleUpdateNode = useCallback((nodeId: string, newData: any) => {
-    hasUserInteractionRef.current = true;
-    isDirtyRef.current = true;
-
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (node.id === nodeId) {
-          return {
-            ...node,
-            data: { ...node.data, ...newData },
-          };
-        }
-        return node;
-      })
-    );
-    // 更新选中的节点
-    setSelectedNode((prev) => {
-      if (prev && prev.id === nodeId) {
-        return { ...prev, data: { ...prev.data, ...newData } };
-      }
-      return prev;
-    });
-  }, [setNodes]);
-
-  const [previewVisible, setPreviewVisible] = useState(false);
-
-  useEffect(() => {
-    if (autoOpenPreview) {
-      setPreviewVisible(true);
-    }
-  }, [autoOpenPreview]);
+  // 运行相关
+  useEffect(() => { if (autoOpenPreview) setPreviewVisible(true); }, [autoOpenPreview]);
 
   const handleDemo = () => {
     setPreviewVisible(true);
+    setIsRunningMode(true);
+    // 重置所有节点状态
+    setNodeExecutionStatuses({});
+    setSelectedNodeForData(null);
   };
+
+  const handleStop = () => {
+    setIsRunningMode(false);
+    setNodeExecutionStatuses({});
+    setSelectedNodeForData(null);
+  };
+
+  const handleNodeStatusChange = useCallback((nodeId: string, status: NodeExecutionStatus) => {
+    setNodeExecutionStatuses(prev => ({ ...prev, [nodeId]: status }));
+  }, []);
+
+  const handleNodeClickFromPreview = useCallback((nodeId: string) => {
+    setSelectedNodeForData(nodeId);
+    // 高亮画布上的节点
+    const node = nodes.find(n => n.id === nodeId);
+    if (node) {
+      setSelectedNode(node);
+    }
+  }, [nodes]);
+
+  const toggleBreakpoint = useCallback((nodeId: string) => {
+    setBreakpoints(prev => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }, []);
+
+  // 收集节点参数到参数池
+  useEffect(() => {
+    nodes.forEach(node => {
+      if (node.type === 'input') {
+        addParam({
+          id: `user_input_${node.id}`,
+          label: `用户输入 (来自${node.data?.label || '输入'})`,
+          type: (node.data.inputType === 'number' ? 'number' : 'string') as any,
+          source: '输入节点',
+          description: `来自${node.data?.label || '输入'}节点`,
+        });
+      }
+      if (node.type === 'llm') {
+        addParam({
+          id: `llm_output_${node.id}`,
+          label: `大模型输出 (来自${node.data?.label || '大模型'})`,
+          type: 'string',
+          source: '大模型节点',
+          description: `来自${node.data?.label || '大模型'}节点`,
+        });
+      }
+      if (node.type === 'code') {
+        (node.data?.outputVars || []).forEach((outputVar: any) => {
+          if (outputVar.name) {
+            addParam({
+              id: outputVar.name,
+              label: `${outputVar.name} (来自${node.data?.label || '代码节点'})`,
+              type: (outputVar.type?.toLowerCase() || 'object') as any,
+              source: '代码节点',
+              description: `代码节点输出参数`,
+            });
+          }
+        });
+      }
+      if (node.type === 'rag') {
+        const outputVar = node.data?.outputVar || 'retrieved_result';
+        addParam({
+          id: outputVar,
+          label: `${outputVar} (来自${node.data?.label || '知识库检索'})`,
+          type: 'object',
+          source: '知识库检索',
+          description: `RAG 检索结果`,
+        });
+      }
+    });
+  }, [nodes, addParam]);
+
+  // 自定义节点组件，注入执行状态
+  const nodeTypeComponents = {
+    start: (props: any) => <StartNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+    input: (props: any) => <InputNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+    llm: (props: any) => <LLMNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+    condition: (props: any) => <ConditionNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+    code: (props: any) => <CodeNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+    rag: (props: any) => <RAGNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+    output: (props: any) => <OutputNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+    end: (props: any) => <EndNode {...props} executionStatus={nodeExecutionStatuses[props.id]} isBreakpoint={breakpoints.has(props.id)} onToggleBreakpoint={() => toggleBreakpoint(props.id)} />,
+  };
+
+  // 根据执行状态更新连线样式
+  const getEdgeStyle = (edge: Edge) => {
+    const sourceStatus = nodeExecutionStatuses[edge.source];
+    const targetStatus = nodeExecutionStatuses[edge.target];
+
+    if (targetStatus === 'running') {
+      return { stroke: '#1890ff', strokeWidth: 3, animation: 'edgeFlow 1s linear infinite' };
+    }
+    if (sourceStatus === 'success' && (targetStatus === 'success' || targetStatus === 'idle')) {
+      return { stroke: '#52c41a', strokeWidth: 2 };
+    }
+    if (sourceStatus === 'failed' || targetStatus === 'failed') {
+      return { stroke: '#ff4d4f', strokeWidth: 2 };
+    }
+    return { stroke: '#bfbfbf', strokeWidth: 1, strokeDasharray: '5,5' };
+  };
+
+  const highFreqNodes = NODE_TYPES.filter(n => n.category === 'high');
+  const lowFreqNodes = NODE_TYPES.filter(n => n.category === 'low');
+  const boundaryNodes = NODE_TYPES.filter(n => n.category === 'boundary');
 
   return (
     <Layout style={{ height: '100vh' }}>
-      <Header style={{ display: 'flex', alignItems: 'center', background: '#001529', padding: '0 24px' }}>
+      {/* 顶部工具栏 */}
+      <Header style={{
+        display: 'flex', alignItems: 'center', background: '#001529',
+        padding: '0 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', zIndex: 100,
+      }}>
         {onBack && (
-          <Button 
-            type="text" 
-            icon={<ArrowLeftOutlined />} 
-            onClick={onBack}
-            style={{ color: 'white', marginRight: 16 }}
-          />
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={onBack}
+            style={{ color: 'white', marginRight: 12 }} />
         )}
         {readOnly ? (
-          <div style={{ color: 'white', fontSize: 20, fontWeight: 'bold' }}>
-            {workflowName}
-          </div>
+          <div style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>{workflowName}</div>
         ) : (
-          <Input
-            value={workflowName}
-            onChange={(e) => {
-              hasUserInteractionRef.current = true;
-              isDirtyRef.current = true;
-              setWorkflowName(e.target.value);
-            }}
-            style={{ width: 300, background: 'transparent', border: 'none', color: 'white', fontSize: 20, fontWeight: 'bold' }}
-            placeholder="工作流名称"
+          <Input value={workflowName}
+            onChange={(e) => { hasUserInteractionRef.current = true; setWorkflowName(e.target.value); }}
+            style={{ width: 280, background: 'transparent', border: 'none', color: 'white', fontSize: 18, fontWeight: 'bold' }}
+            placeholder="工作流名称" />
+        )}
+
+        {/* 运行模式指示器 */}
+        {isRunningMode && (
+          <Badge
+            status="processing"
+            text={<span style={{ color: '#52c41a', fontWeight: 600 }}>运行模式</span>}
+            style={{ marginLeft: 16 }}
           />
         )}
-        <Space style={{ marginLeft: 'auto' }}>
+
+        <Space style={{ marginLeft: 'auto' }} size="middle">
           {!readOnly && (
-            <Button 
-              icon={<SaveOutlined />} 
-              type="primary" 
-              onClick={handleSave}
-              loading={isSaving}
-            >
-              {isSaving ? '保存中...' : '保存'}
-            </Button>
+            <Tooltip title={isDirtyRef.current ? '有未保存的更改' : '已自动保存'}>
+              <Button icon={<SaveOutlined />} type="primary" onClick={handleSave} loading={isSaving}>
+                {isSaving ? '保存中' : isDirtyRef.current ? '保存' : '已保存'}
+              </Button>
+            </Tooltip>
           )}
-          <Button icon={<PlayCircleOutlined />} onClick={handleDemo}>演示</Button>
+
+          {isRunningMode ? (
+            <Button
+              icon={<StopOutlined />}
+              danger
+              onClick={handleStop}
+              style={{ color: '#ff4d4f', borderColor: '#ff4d4f' }}
+            >
+              停止
+            </Button>
+          ) : (
+            <Button icon={<PlayCircleOutlined />} type="primary" ghost onClick={handleDemo}
+              style={{ color: '#40a9ff', borderColor: '#40a9ff' }}>运行</Button>
+          )}
+
+          <Button icon={<CompressOutlined />} onClick={handleFitView}
+            style={{ color: 'rgba(255,255,255,0.85)', background: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.2)' }}>
+            居中
+          </Button>
         </Space>
       </Header>
+
       <Layout>
-        <Sider width={220} style={{ background: '#f5f5f5', borderRight: '1px solid #e8e8e8', padding: '16px' }}>
-          <h3 style={{ marginBottom: '16px', color: '#333' }}>组件库</h3>
-          <div style={{ marginTop: '16px' }}>
-            <DraggableNode type="start" label="开始节点" icon="🚀" color="#52c41a" />
-            <DraggableNode type="input" label="输入节点" icon="📥" color="#1890ff" />
-            <DraggableNode type="llm" label="大模型节点" icon="🤖" color="#722ed1" />
-            <DraggableNode type="condition" label="条件分支" icon="🔀" color="#fa8c16" />
-            <DraggableNode type="code" label="代码节点" icon="💻" color="#13c2c2" />
-            <DraggableNode type="rag" label="知识库检索" icon="📚" color="#2f54eb" />
-            <DraggableNode type="output" label="输出节点" icon="📤" color="#eb2f96" />
-            <DraggableNode type="end" label="结束节点" icon="🏁" color="#ff4d4f" />
+        {/* 左侧组件面板 */}
+        <Sider width={200} style={{ background: '#fafafa', borderRight: '1px solid #e8e8e8', padding: '12px', overflow: 'auto' }}>
+          <h4 style={{ margin: '0 0 12px 0', color: '#1f2937', fontWeight: 600, fontSize: '14px' }}>组件库</h4>
+
+          {/* 高频组件 */}
+          <div style={{ marginBottom: '8px' }}>
+            {highFreqNodes.map(config => (
+              <DraggableNodeItem key={config.type} config={config} onAdd={handleAddNode} />
+            ))}
           </div>
-          <div style={{ marginTop: '24px', padding: '12px', background: '#fff', borderRadius: '8px', fontSize: '12px', color: '#666' }}>
-            <p style={{ margin: 0 }}>💡 提示：拖拽组件到画布</p>
+
+          {/* 低频组件 */}
+          <div style={{ marginBottom: '8px', paddingTop: '8px', borderTop: '1px dashed #e8e8e8' }}>
+            {lowFreqNodes.map(config => (
+              <DraggableNodeItem key={config.type} config={config} onAdd={handleAddNode} />
+            ))}
+          </div>
+
+          {/* 边界组件 */}
+          <div style={{ paddingTop: '8px', borderTop: '1px dashed #e8e8e8' }}>
+            {boundaryNodes.map(config => (
+              <DraggableNodeItem key={config.type} config={config} onAdd={handleAddNode} />
+            ))}
           </div>
         </Sider>
-        <Content style={{ background: '#f0f2f5' }}>
+
+        {/* 画布区域 */}
+        <Content style={{ background: '#f5f7fa', position: 'relative' }}>
           <div ref={reactFlowWrapper} style={{ width: '100%', height: '100%' }}>
             <ReactFlow
               nodes={nodes}
-              edges={edges}
+              edges={edges.map(edge => ({
+                ...edge,
+                style: getEdgeStyle(edge),
+                animated: nodeExecutionStatuses[edge.target] === 'running',
+              }))}
               onNodesChange={handleNodesChangeWithInteraction}
               onEdgesChange={handleEdgesChangeWithInteraction}
               onConnect={onConnect}
@@ -717,29 +784,91 @@ const FlowCanvas = ({
               onNodeClick={onNodeClick}
               nodeTypes={nodeTypeComponents}
               fitView
+              snapToGrid
+              snapGrid={[15, 15]}
+              nodesDraggable={!isRunningMode}
+              nodesConnectable={!isRunningMode}
+              elementsSelectable={true}
+              defaultEdgeOptions={{
+                type: 'smoothstep',
+                animated: true,
+                style: { strokeWidth: 2 },
+                markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
+              }}
             >
-              <Background />
-              <Controls />
-              <MiniMap />
+              <Background gap={20} size={1} color="#e8e8e8" style={{ opacity: 0.5 }} />
+              <Controls style={{ bottom: 80, left: 16 }} />
+              <MiniMap
+                style={{ bottom: 16, right: 16, background: 'rgba(255,255,255,0.9)', borderRadius: 8 }}
+                nodeStrokeWidth={3}
+                nodeColor={(n) => {
+                  const status = nodeExecutionStatuses[n.id];
+                  if (status === 'success') return '#52c41a';
+                  if (status === 'failed') return '#ff4d4f';
+                  if (status === 'running') return '#1890ff';
+                  return getNodeConfig(n.type || '').color;
+                }}
+                maskColor="rgba(0,0,0,0.05)"
+              />
             </ReactFlow>
           </div>
+
+          {/* CSS 动画 */}
+          <style>{`
+            @keyframes nodePulse {
+              0%, 100% { box-shadow: 0 0 0 4px rgba(24, 144, 255, 0.1), 0 0 20px rgba(24, 144, 255, 0.2); }
+              50% { box-shadow: 0 0 0 8px rgba(24, 144, 255, 0.15), 0 0 30px rgba(24, 144, 255, 0.3); }
+            }
+            @keyframes edgeFlow {
+              0% { stroke-dashoffset: 0; }
+              100% { stroke-dashoffset: -20; }
+            }
+          `}</style>
         </Content>
-        <Sider width={320} style={{ background: '#fff', borderLeft: '1px solid #e8e8e8', overflow: 'auto' }}>
-          <NodeConfigPanel selectedNode={selectedNode} onUpdateNode={handleUpdateNode} />
+
+        {/* 右侧属性面板 */}
+        <Sider width={340} style={{ background: '#fff', borderLeft: '1px solid #e8e8e8', overflow: 'auto' }}>
+          {isRunningMode ? (
+            <div style={{ padding: '32px 20px', textAlign: 'center' }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>▶️</div>
+              <h4 style={{ color: '#1f2937', marginBottom: '8px', fontWeight: 600 }}>运行模式</h4>
+              <p style={{ color: '#8c8c8c', fontSize: '14px', marginBottom: '24px' }}>
+                点击画布上的节点查看执行数据
+              </p>
+              <div style={{ padding: '16px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '8px', textAlign: 'left' }}>
+                <p style={{ margin: '0 0 8px 0', color: '#52c41a', fontWeight: 600, fontSize: '13px' }}>💡 提示</p>
+                <p style={{ margin: 0, color: '#4b5563', fontSize: '13px', lineHeight: '1.6' }}>
+                  右侧运行面板显示详细日志和进度。点击节点可查看输入/输出数据。
+                </p>
+              </div>
+            </div>
+          ) : (
+            <NodeConfigPanel selectedNode={selectedNode} onUpdateNode={handleUpdateNode} />
+          )}
         </Sider>
       </Layout>
+
       <WorkflowPreview
         visible={previewVisible}
-        onClose={() => setPreviewVisible(false)}
+        onClose={() => {
+          setPreviewVisible(false);
+          setIsRunningMode(false);
+          setNodeExecutionStatuses({});
+        }}
         nodes={nodes}
         edges={edges}
         workflowName={workflowName}
+        isRunningMode={isRunningMode}
+        onRunningModeChange={setIsRunningMode}
+        onNodeStatusChange={handleNodeStatusChange}
+        onNodeClick={handleNodeClickFromPreview}
+        selectedNodeId={selectedNodeForData}
       />
     </Layout>
   );
 };
 
-// 主组件
+// ========== 主组件 ==========
 const WorkflowEditor: FC<WorkflowEditorProps> = ({ workflow: initialWorkflow, onBack, readOnly = false, autoOpenPreview = false }) => {
   const [workflow, setWorkflow] = useState<Workflow | null>(initialWorkflow || null);
   const [workflowName, setWorkflowName] = useState(initialWorkflow?.workflowName || '新工作流');
@@ -747,19 +876,10 @@ const WorkflowEditor: FC<WorkflowEditorProps> = ({ workflow: initialWorkflow, on
   const handleSave = async (name: string, graphData: any) => {
     try {
       if (workflow) {
-        // 更新已有工作流
-        await workflowApi.update(workflow.workflowId, {
-          workflowName: name,
-          graphData,
-        });
+        await workflowApi.update(workflow.workflowId, { workflowName: name, graphData });
         message.success('工作流已更新！');
       } else {
-        // 创建新工作流
-        const newWorkflow = await workflowApi.create({
-          workflowName: name,
-          graphData,
-        });
-        // 保存新工作流到状态，以便后续可以更新
+        const newWorkflow = await workflowApi.create({ workflowName: name, graphData });
         setWorkflow(newWorkflow);
         message.success('工作流已创建！');
       }

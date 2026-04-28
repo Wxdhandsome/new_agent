@@ -10,6 +10,7 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: #f5f7fa;
 }
 
 #root {
@@ -18,16 +19,268 @@ body {
   overflow: hidden;
 }
 
+/* ========== 全局过渡动画 ========== */
+.ant-btn,
+.ant-card,
+.ant-tag,
+.ant-menu-item,
+.ant-table-row {
+  transition: all 0.3s ease !important;
+}
+
+/* ========== 按钮交互优化 ========== */
+.ant-btn {
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.ant-btn-primary {
+  background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+  border: none;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.25);
+}
+
+.ant-btn-primary:hover {
+  background: linear-gradient(135deg, #40a9ff 0%, #1890ff 100%);
+  box-shadow: 0 4px 16px rgba(24, 144, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.ant-btn-primary:active {
+  transform: translateY(0);
+}
+
+.ant-btn-default:hover {
+  border-color: #1890ff;
+  color: #1890ff;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.15);
+}
+
+.ant-btn-link {
+  font-weight: 500;
+}
+
+.ant-btn-link:hover {
+  transform: translateX(2px);
+}
+
+/* ========== 卡片样式优化 ========== */
+.ant-card {
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  border: 1px solid #f0f0f0;
+}
+
+.ant-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+/* ========== 表格样式优化 ========== */
+.ant-table {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ant-table-thead > tr > th {
+  background: #fafbfc !important;
+  font-weight: 600;
+  color: #1f2937;
+  padding: 14px 16px !important;
+  border-bottom: 2px solid #e8e8e8 !important;
+}
+
+.ant-table-tbody > tr > td {
+  padding: 14px 16px !important;
+  color: #4b5563;
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: #f0f7ff !important;
+}
+
+.ant-table-row {
+  cursor: pointer;
+}
+
+/* ========== 标签样式优化 ========== */
+.ant-tag {
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+/* ========== 菜单样式优化 ========== */
+.ant-menu-dark {
+  background: transparent !important;
+}
+
+.ant-menu-dark .ant-menu-item {
+  border-radius: 8px;
+  margin: 4px 8px;
+  transition: all 0.3s ease;
+}
+
+.ant-menu-dark .ant-menu-item:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.ant-menu-dark .ant-menu-item-selected {
+  background: rgba(24, 144, 255, 0.2) !important;
+  box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.3);
+}
+
+/* ========== 模态框样式优化 ========== */
+.ant-modal-content {
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+.ant-modal-header {
+  border-radius: 12px 12px 0 0;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.ant-modal-title {
+  font-weight: 600;
+  font-size: 18px;
+  color: #1f2937;
+}
+
+/* ========== 输入框样式优化 ========== */
+.ant-input,
+.ant-input-textarea {
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.ant-input:focus,
+.ant-input-textarea:focus {
+  box-shadow: 0 0 0 3px rgba(24, 144, 255, 0.1);
+  border-color: #1890ff;
+}
+
+/* ========== React Flow 节点样式 ========== */
 .react-flow__node {
   border: 2px solid #1890ff;
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 12px;
+  padding: 12px 16px;
   background: white;
-  min-width: 150px;
+  min-width: 160px;
   font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+}
+
+.react-flow__node:hover {
+  box-shadow: 0 4px 16px rgba(24, 144, 255, 0.2);
+  transform: translateY(-2px);
 }
 
 .react-flow__node.selected {
   border-color: #ff4d4f;
-  box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.2);
+  box-shadow: 0 0 0 3px rgba(255, 77, 79, 0.15), 0 4px 16px rgba(255, 77, 79, 0.2);
+}
+
+/* ========== 页面标题样式 ========== */
+.page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0;
+  letter-spacing: -0.5px;
+}
+
+.page-subtitle {
+  font-size: 14px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+/* ========== 快捷卡片样式 ========== */
+.quick-access-card {
+  background: linear-gradient(135deg, #f0f7ff 0%, #e6f4ff 100%);
+  border: 1px solid #bae0ff;
+  border-radius: 12px;
+  padding: 20px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.quick-access-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(24, 144, 255, 0.15);
+  border-color: #1890ff;
+}
+
+/* ========== 使用提示样式 ========== */
+.tips-card {
+  background: linear-gradient(135deg, #f6ffed 0%, #f0f7e6 100%);
+  border: 1px solid #b7eb8f;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+/* ========== 状态指示器 ========== */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-indicator::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ========== 空状态优化 ========== */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #9ca3af;
+}
+
+.empty-state-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.4;
+  color: #d1d5db;
+}
+
+/* ========== 滚动条美化 ========== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* ========== 响应式适配 ========== */
+@media (max-width: 768px) {
+  .ant-table {
+    overflow-x: auto;
+  }
+  
+  .page-title {
+    font-size: 20px;
+  }
+  
+  .ant-card {
+    margin: 8px;
+  }
 }

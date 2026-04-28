@@ -83,18 +83,22 @@ def api_delete_workflow(workflow_id: str, db: Session = Depends(get_db)):
     return {"message": "Workflow deleted successfully"}
 
 
+class WorkflowRunRequest(BaseModel):
+    input_data: dict = {}
+
+
 @router.post("/{workflow_id}/demo", response_model=WorkflowRunResponse)
 def api_demo_workflow(
-    workflow_id: str, data: dict = {}, db: Session = Depends(get_db)
+    workflow_id: str, data: WorkflowRunRequest, db: Session = Depends(get_db)
 ):
     workflow = get_workflow(db, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     
-    run = create_workflow_run(db, workflow_id, "demo_user", data.get("input_data"))
+    run = create_workflow_run(db, workflow_id, "demo_user", data.input_data)
     
     try:
-        result = mock_execute_workflow(workflow.graph_data, data.get("input_data"))
+        result = mock_execute_workflow(workflow.graph_data, data.input_data)
         if result["status"] == "success":
             run = update_workflow_run_status(
                 db,
@@ -123,16 +127,16 @@ def api_demo_workflow(
 
 @router.post("/{workflow_id}/run", response_model=WorkflowRunResponse)
 def api_run_workflow(
-    workflow_id: str, data: dict = {}, db: Session = Depends(get_db)
+    workflow_id: str, data: WorkflowRunRequest, db: Session = Depends(get_db)
 ):
     workflow = get_workflow(db, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     
-    run = create_workflow_run(db, workflow_id, "user_001", data.get("input_data"))
+    run = create_workflow_run(db, workflow_id, "user_001", data.input_data)
     
     try:
-        result = mock_execute_workflow(workflow.graph_data, data.get("input_data"))
+        result = mock_execute_workflow(workflow.graph_data, data.input_data)
         if result["status"] == "success":
             run = update_workflow_run_status(
                 db,
